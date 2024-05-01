@@ -1,6 +1,0 @@
-[submodule "go"]
-	path = go
-	url = https://github.com/davro/go
-[submodule "cpp"]
-	path = cpp
-	url = git@github.com:davro/cpp.git
