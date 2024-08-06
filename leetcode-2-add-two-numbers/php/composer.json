@@ -1,0 +1,17 @@
+{
+    "name": "add-two-numbers/example",
+    "description": "A simple PHP project to solve the Add Two Numbers problem.",
+    "require": {},
+    "require-dev": {
+        "phpunit/phpunit": "^9.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Leetcode\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit tests/"
+    }
+}
+
