@@ -107,9 +107,9 @@ A lightweight, Python-based IDE built with PyQt6, designed for managing multiple
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/workspace-ide.git
-cd workspace-ide
-test
+git clone https://github.com/davro/workspace.git
+cd ~/workspace
+
 # Create virtual environment
 python -m venv workspace-env
 source workspace-env/bin/activate  # On Windows: workspace-env\Scripts\activate
@@ -118,7 +118,7 @@ source workspace-env/bin/activate  # On Windows: workspace-env\Scripts\activate
 pip install PyQt6
 
 # Run the IDE
-python workspace_ide.py
+python workspace.py
 ```
 
 ### Optional: Ollama Integration
