@@ -4,7 +4,7 @@ A lightweight, Python-based IDE built with PyQt6, designed for managing multiple
 
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.10.0-green.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ## Features
 
@@ -14,7 +14,7 @@ A lightweight, Python-based IDE built with PyQt6, designed for managing multiple
 - **Line Numbers**: Toggle-able line numbers with current line highlighting
 - **Project-Based Workflow**: Organize and activate specific projects within your workspace
 - **File Explorer**: Tree view with context menus for file/folder operations
-- **Smart Tab Management**: 
+- **Smart Tab Management**:
   - Reorderable tabs with drag-and-drop
   - Modified file indicators (● symbol)
   - Active tab highlighting
@@ -27,7 +27,7 @@ A lightweight, Python-based IDE built with PyQt6, designed for managing multiple
   - Intelligent scoring algorithm
   - Color-coded results by file type
   - Fast caching for instant subsequent opens
-- **Find & Replace**: 
+- **Find & Replace**:
   - Fuzzy matching
   - Regular expression support
   - Case-sensitive and whole-word options
@@ -113,10 +113,10 @@ test
 # Create virtual environment
 python -m venv workspace-env
 source workspace-env/bin/activate  # On Windows: workspace-env\Scripts\activate
- 
+
 # Install dependencies
 pip install PyQt6
- 
+
 # Run the IDE
 python workspace_ide.py
 ```
