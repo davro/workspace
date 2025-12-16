@@ -1,0 +1,303 @@
+from PyQt6.QtWidgets import (
+    QFrame,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QLabel,
+    QPushButton,
+    QCheckBox,
+    QTextEdit,
+    QMessageBox,
+)
+from PyQt6.QtGui import (
+    QColor,
+    QTextCursor,
+    QTextDocument,
+)
+from PyQt6.QtCore import Qt, QRegularExpression
+
+
+# ---------------------- Find & Replace Widget ----------------------
+class FindReplaceWidget(QFrame):
+    """Find and Replace panel widget"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.editor = None
+        self.current_match_index = -1
+        self.matches = []
+
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #2B2B2B;
+                border-bottom: 1px solid #555;
+            }
+            QLineEdit {
+                background-color: #3C3F41;
+                color: #CCC;
+                border: 1px solid #555;
+                padding: 3px;
+                border-radius: 2px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #4A9EFF;
+            }
+            QPushButton {
+                background-color: #3C3F41;
+                color: #CCC;
+                border: 1px solid #555;
+                padding: 3px 8px;
+                border-radius: 2px;
+            }
+            QPushButton:hover {
+                background-color: #4A4A4A;
+            }
+            QPushButton:pressed {
+                background-color: #2A2A2A;
+            }
+            QCheckBox {
+                color: #CCC;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(3)
+
+        find_row = QHBoxLayout()
+        self.find_input = QLineEdit()
+        self.find_input.setPlaceholderText("Find")
+        self.find_input.textChanged.connect(self.on_find_text_changed)
+        self.find_input.returnPressed.connect(self.find_next)
+        find_row.addWidget(self.find_input)
+
+        self.match_label = QLabel("No matches")
+        self.match_label.setStyleSheet("color: #999;")
+        find_row.addWidget(self.match_label)
+
+        prev_btn = QPushButton("↑")
+        prev_btn.setToolTip("Previous (Shift+F3)")
+        prev_btn.clicked.connect(self.find_previous)
+        find_row.addWidget(prev_btn)
+
+        next_btn = QPushButton("↓")
+        next_btn.setToolTip("Next (F3)")
+        next_btn.clicked.connect(self.find_next)
+        find_row.addWidget(next_btn)
+
+        layout.addLayout(find_row)
+
+        replace_row = QHBoxLayout()
+        self.replace_input = QLineEdit()
+        self.replace_input.setPlaceholderText("Replace")
+        self.replace_input.returnPressed.connect(self.replace_current)
+        replace_row.addWidget(self.replace_input)
+
+        replace_btn = QPushButton("Replace")
+        replace_btn.clicked.connect(self.replace_current)
+        replace_row.addWidget(replace_btn)
+
+        replace_all_btn = QPushButton("Replace All")
+        replace_all_btn.clicked.connect(self.replace_all)
+        replace_row.addWidget(replace_all_btn)
+
+        layout.addLayout(replace_row)
+
+        options_row = QHBoxLayout()
+        self.case_sensitive = QCheckBox("Match Case")
+        self.case_sensitive.stateChanged.connect(self.on_find_text_changed)
+        options_row.addWidget(self.case_sensitive)
+
+        self.whole_word = QCheckBox("Whole Word")
+        self.whole_word.stateChanged.connect(self.on_find_text_changed)
+        options_row.addWidget(self.whole_word)
+
+        self.regex = QCheckBox("Regex")
+        self.regex.stateChanged.connect(self.on_find_text_changed)
+        options_row.addWidget(self.regex)
+
+        self.in_selection = QCheckBox("In Selection")
+        self.in_selection.stateChanged.connect(self.on_find_text_changed)
+        options_row.addWidget(self.in_selection)
+
+        options_row.addStretch()
+
+        close_btn = QPushButton("✖")
+        close_btn.setFixedWidth(25)
+        close_btn.clicked.connect(self.hide)
+        options_row.addWidget(close_btn)
+
+        layout.addLayout(options_row)
+
+        self.hide()
+
+    def set_editor(self, editor):
+        self.editor = editor
+        self.clear_highlights()
+
+    def show_find(self):
+        self.show()
+        self.find_input.setFocus()
+        self.find_input.selectAll()
+
+        if self.editor:
+            cursor = self.editor.textCursor()
+            if cursor.hasSelection():
+                selected = cursor.selectedText()
+                if '\u2029' not in selected:
+                    self.find_input.setText(selected)
+
+    def on_find_text_changed(self):
+        self.clear_highlights()
+        if not self.editor or not self.find_input.text():
+            self.match_label.setText("No matches")
+            return
+
+        self.find_all_matches()
+        self.highlight_all_matches()
+
+        if self.matches:
+            self.current_match_index = 0
+            self.highlight_current_match()
+            self.match_label.setText(f"1 of {len(self.matches)}")
+        else:
+            self.match_label.setText("No matches")
+
+    def find_all_matches(self):
+        self.matches = []
+        if not self.editor:
+            return
+
+        search_text = self.find_input.text()
+        if not search_text:
+            return
+
+        flags = QTextDocument.FindFlag(0)
+        if self.case_sensitive.isChecked():
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        if self.whole_word.isChecked():
+            flags |= QTextDocument.FindFlag.FindWholeWords
+
+        if self.in_selection.isChecked() and self.editor.textCursor().hasSelection():
+            cursor = self.editor.textCursor()
+            start = cursor.selectionStart()
+            end = cursor.selectionEnd()
+        else:
+            start = 0
+            end = len(self.editor.toPlainText())
+
+        cursor = self.editor.textCursor()
+        cursor.setPosition(start)
+
+        if self.regex.isChecked():
+            regex = QRegularExpression(search_text)
+            if not self.case_sensitive.isChecked():
+                regex.setPatternOptions(QRegularExpression.PatternOption.CaseInsensitiveOption)
+
+            while True:
+                cursor = self.editor.document().find(regex, cursor, flags)
+                if cursor.isNull() or cursor.position() > end:
+                    break
+                self.matches.append((cursor.selectionStart(), cursor.selectionEnd()))
+        else:
+            while True:
+                cursor = self.editor.document().find(search_text, cursor, flags)
+                if cursor.isNull() or cursor.position() > end:
+                    break
+                self.matches.append((cursor.selectionStart(), cursor.selectionEnd()))
+
+    def highlight_all_matches(self):
+        if not self.editor or not self.matches:
+            return
+
+        extra_selections = []
+        for start, end in self.matches:
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = self.editor.textCursor()
+            selection.cursor.setPosition(start)
+            selection.cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            selection.format.setBackground(QColor("#4A4A4A"))
+            extra_selections.append(selection)
+
+        self.editor.setExtraSelections(extra_selections)
+
+    def highlight_current_match(self):
+        if not self.editor or not self.matches or self.current_match_index < 0:
+            return
+
+        start, end = self.matches[self.current_match_index]
+
+        extra_selections = []
+        for i, (s, e) in enumerate(self.matches):
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = self.editor.textCursor()
+            selection.cursor.setPosition(s)
+            selection.cursor.setPosition(e, QTextCursor.MoveMode.KeepAnchor)
+
+            if i == self.current_match_index:
+                selection.format.setBackground(QColor("#FFA500"))
+            else:
+                selection.format.setBackground(QColor("#4A4A4A"))
+
+            extra_selections.append(selection)
+
+        self.editor.setExtraSelections(extra_selections)
+
+        cursor = self.editor.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self.editor.setTextCursor(cursor)
+        self.editor.ensureCursorVisible()
+
+    def clear_highlights(self):
+        if self.editor:
+            self.editor.setExtraSelections([])
+        self.matches = []
+        self.current_match_index = -1
+
+    def find_next(self):
+        if not self.matches:
+            return
+
+        self.current_match_index = (self.current_match_index + 1) % len(self.matches)
+        self.highlight_current_match()
+        self.match_label.setText(f"{self.current_match_index + 1} of {len(self.matches)}")
+
+    def find_previous(self):
+        if not self.matches:
+            return
+
+        self.current_match_index = (self.current_match_index - 1) % len(self.matches)
+        self.highlight_current_match()
+        self.match_label.setText(f"{self.current_match_index + 1} of {len(self.matches)}")
+
+    def replace_current(self):
+        if not self.matches or self.current_match_index < 0:
+            return
+
+        start, end = self.matches[self.current_match_index]
+        cursor = self.editor.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(self.replace_input.text())
+
+        self.on_find_text_changed()
+
+        if self.matches and self.current_match_index < len(self.matches):
+            self.find_next()
+
+    def replace_all(self):
+        if not self.matches:
+            return
+
+        count = len(self.matches)
+
+        for start, end in reversed(self.matches):
+            cursor = self.editor.textCursor()
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            cursor.insertText(self.replace_input.text())
+
+        self.clear_highlights()
+        self.match_label.setText(f"Replaced {count} occurrence(s)")
+        QMessageBox.information(self, "Replace All", f"Replaced {count} occurrence(s)")
