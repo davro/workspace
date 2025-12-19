@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Workspace IDE - Integrated with Ollama
-Fixed: Active tab highlighting and full path tooltips
+Workspace IDE - Cursor-Style Layout
+Ollama Chat on the right side, no embedded terminal
 """
-
+import subprocess
+import os
 import sys
 import json
 import time
@@ -44,7 +45,7 @@ from PyQt6.QtCore import (
     QTimer,
 )
 
-from PyQt6.QtWidgets import QApplication  # Already imported above, but safe to repeat
+from PyQt6.QtWidgets import QApplication
 QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 from ide import VERSION, WORKSPACE_PATH
@@ -54,7 +55,6 @@ from ide.core.FindReplace import FindReplaceWidget
 from ide.core.QuickOpen import QuickOpenDialog
 from ide.core.Settings import SettingsDialog
 from ide.core.Ollama import OllamaWorker, OllamaChatWidget
-from ide.core.Terminal import Terminal
 from ide.core.Document import DocumentDialog
 from ide.core.TabBar import StyledTabBar, StyledTabWidget
 from ide.core.FileScanner import FileScannerThread
@@ -75,8 +75,7 @@ class WorkspaceIDE(QMainWindow):
         self.quick_open_cache_time = 0
 
         self.settings = self.load_settings()
-        # self.init_plugin_system()
-        self.plugin_ui = PluginManagerUI(self)  # New helper
+        self.plugin_ui = PluginManagerUI(self)
 
         self.init_ui()
         self.ensure_workspace()
@@ -90,7 +89,6 @@ class WorkspaceIDE(QMainWindow):
             self.update_tree_highlighting()
 
         self.apply_initial_layout()
-
 
     def show_documentation(self):
         """Show documentation from README.md"""
@@ -178,20 +176,34 @@ class WorkspaceIDE(QMainWindow):
         if ok and prompt.strip():
             full_message = f"{prompt}\n\n```\n{text_to_send}\n```"
             self.ollama_widget.send_text_message(full_message)
-            self.bottom_tabs.setCurrentIndex(1)
+            self.show_ollama_panel()
             self.status_message.setText(f"Sent {len(text_to_send)} characters to Ollama")
             QTimer.singleShot(3000, lambda: self.status_message.setText(""))
+
+    # def save_tab(self, tab_index):
+        # editor = self.tabs.widget(tab_index)
+        # if isinstance(editor, CodeEditor):
+            # if editor.save_file():
+                # editor.is_modified = False
+                # self.status_message.setText("File saved")
+                # QTimer.singleShot(2000, lambda: self.status_message.setText(""))
+                # title = self.tabs.tabText(tab_index)
+                # if title.startswith('● '):
+                    # self.tabs.setTabText(tab_index, title[2:])
 
     def save_tab(self, tab_index):
         editor = self.tabs.widget(tab_index)
         if isinstance(editor, CodeEditor):
-            if editor.save_file():
-                editor.is_modified = False
+            if editor.save_file():  # This should call document().setModified(False)
+                # Force clear just in case
+                editor.document().setModified(False)
+                
+                # Trigger update (this will now correctly remove the dot)
+                self.on_editor_modified(editor)
+                
                 self.status_message.setText("File saved")
                 QTimer.singleShot(2000, lambda: self.status_message.setText(""))
-                title = self.tabs.tabText(tab_index)
-                if title.startswith('● '):
-                    self.tabs.setTabText(tab_index, title[2:])
+
 
     def close_other_tabs(self, keep_index):
         indices_to_close = []
@@ -225,14 +237,26 @@ class WorkspaceIDE(QMainWindow):
                 self.update_status_bar()
                 editor.cursorPositionChanged.connect(self.update_cursor_position)
 
+    # def on_editor_modified(self, editor):
+        # for i in range(self.tabs.count()):
+            # if self.tabs.widget(i) == editor:
+                # current_text = self.tabs.tabText(i)
+                # if editor.is_modified and not current_text.startswith('● '):
+                    # self.tabs.setTabText(i, f"● {current_text}")
+                # elif not editor.is_modified and current_text.startswith('● '):
+                    # self.tabs.setTabText(i, current_text[2:])
+                # break
+
     def on_editor_modified(self, editor):
         for i in range(self.tabs.count()):
             if self.tabs.widget(i) == editor:
                 current_text = self.tabs.tabText(i)
-                if editor.is_modified and not current_text.startswith('● '):
-                    self.tabs.setTabText(i, f"● {current_text}")
-                elif not editor.is_modified and current_text.startswith('● '):
-                    self.tabs.setTabText(i, current_text[2:])
+                if editor.document().isModified():
+                    if not current_text.startswith('● '):
+                        self.tabs.setTabText(i, f"● {current_text}")
+                else:
+                    if current_text.startswith('● '):
+                        self.tabs.setTabText(i, current_text[2:])
                 break
 
     def update_cursor_position(self):
@@ -344,14 +368,14 @@ class WorkspaceIDE(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle(f"Workspace IDE ({VERSION})")
-        self.resize(1400, 900)
+        self.resize(1600, 900)
 
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Menu bar (replaces toolbar)
+        # Menu bar
         menubar = self.menuBar()
         menubar.setStyleSheet("""
             QMenuBar {
@@ -484,18 +508,6 @@ class WorkspaceIDE(QMainWindow):
         comment_action.triggered.connect(self.toggle_comment)
         edit_menu.addAction(comment_action)
 
-        indent_action = QAction("Indent", self)
-        indent_action.setShortcut("Tab")
-        indent_action.triggered.connect(self.indent_lines)
-        edit_menu.addAction(indent_action)
-
-        unindent_action = QAction("Unindent", self)
-        unindent_action.setShortcut("Shift+Tab")
-        unindent_action.triggered.connect(self.unindent_lines)
-        edit_menu.addAction(unindent_action)
-
-        edit_menu.addSeparator()
-
         find_action = QAction("Find", self)
         find_action.setShortcut("Ctrl+F")
         find_action.triggered.connect(self.show_find_replace)
@@ -522,16 +534,15 @@ class WorkspaceIDE(QMainWindow):
         toggle_explorer_action.triggered.connect(self.toggle_explorer)
         view_menu.addAction(toggle_explorer_action)
 
-        toggle_terminal_action = QAction("Toggle Terminal", self)
-        toggle_terminal_action.setShortcut("Ctrl+`")
-        toggle_terminal_action.triggered.connect(self.toggle_terminal)
-        view_menu.addAction(toggle_terminal_action)
+        toggle_ai_action = QAction("Toggle AI Chat", self)
+        toggle_ai_action.setShortcut("Ctrl+L")
+        toggle_ai_action.triggered.connect(self.toggle_ollama_panel)
+        view_menu.addAction(toggle_ai_action)
 
         # Go menu
         go_menu = menubar.addMenu("Go")
 
         go_to_file_action = QAction("Go to File...", self)
-        #go_to_file_action.setShortcut("Ctrl+P")
         go_to_file_action.triggered.connect(self.show_quick_open)
         go_menu.addAction(go_to_file_action)
 
@@ -551,16 +562,11 @@ class WorkspaceIDE(QMainWindow):
         # Terminal menu
         terminal_menu = menubar.addMenu("Terminal")
 
-        # new_terminal_action = QAction("New Terminal", self)
-        # new_terminal_action.setShortcut("Ctrl+Shift+`")
-        # new_terminal_action.triggered.connect(lambda: self.bottom_tabs.setCurrentIndex(0))
-        # terminal_menu.addAction(new_terminal_action)
+        open_terminal_action = QAction("Open External Terminal", self)
+        open_terminal_action.setShortcut("Ctrl+Shift+T")
+        open_terminal_action.triggered.connect(self.open_external_terminal)
+        terminal_menu.addAction(open_terminal_action)
 
-        clear_terminal_action = QAction("Clear Terminal", self)
-        clear_terminal_action.triggered.connect(self.clear_terminal)
-        terminal_menu.addAction(clear_terminal_action)
-
-        # self.plugins_menu = self.create_plugin_menu(menubar)
         self.plugins_menu = self.plugin_ui.create_plugin_menu(menubar)
 
         # Help menu
@@ -571,13 +577,11 @@ class WorkspaceIDE(QMainWindow):
         help_menu.addAction(about_action)
 
         documentation_action = QAction("Documentation", self)
-        #documentation_action.triggered.connect(self.show_about)
         documentation_action.triggered.connect(self.show_documentation)
         documentation_action.setShortcut("F1")
         help_menu.addAction(documentation_action)
 
         changelog_action = QAction("Changelog", self)
-        #documentation_action.triggered.connect(self.show_about)
         changelog_action.triggered.connect(self.show_changelog)
         changelog_action.setShortcut("F2")
         help_menu.addAction(changelog_action)
@@ -589,16 +593,11 @@ class WorkspaceIDE(QMainWindow):
         keyboard_shortcuts_action.triggered.connect(self.show_keyboard_shortcuts)
         help_menu.addAction(keyboard_shortcuts_action)
 
-
-        # Comment toggle shortcut
-        #omment_shortcut = QShortcut(QKeySequence("Ctrl+/"), self)
-        #comment_shortcut.activated.connect(self.toggle_comment)
-        # Indent/Unindent shortcuts are handled in CodeEditor.keyPressEvent
-        # Tab = indent, Shift+Tab = unindent
-
+        # Main horizontal splitter: [Left Sidebar | Editor | Right Sidebar]
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(self.main_splitter)
 
+        # LEFT SIDEBAR - Files & Projects
         left_tabs = QTabWidget()
         left_tabs.setMaximumWidth(450)
 
@@ -620,20 +619,12 @@ class WorkspaceIDE(QMainWindow):
         self.tree_delegate = ProjectHighlightDelegate(self.tree)
         self.tree.setItemDelegate(self.tree_delegate)
 
-        # Show only Name and Type columns (hide Size and Date Modified)
-        self.tree.setColumnWidth(0, 450)  # Name - wider since it's main column
-        self.tree.setColumnHidden(1, True)  # Hide Size
-        self.tree.setColumnHidden(2, True)   # Hide Type
-        self.tree.setColumnHidden(3, True)  # Hide Date Modified
-
-		# OLD
-        # self.tree.setColumnWidth(0, 200)
-        # self.tree.setColumnWidth(1, 70)
-        # self.tree.setColumnWidth(2, 80)
-        # self.tree.setColumnWidth(3, 100)
+        self.tree.setColumnWidth(0, 450)
+        self.tree.setColumnHidden(1, True)
+        self.tree.setColumnHidden(2, True)
+        self.tree.setColumnHidden(3, True)
 
         self.tree.doubleClicked.connect(self.open_file)
-
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_explorer_context_menu)
 
@@ -646,40 +637,7 @@ class WorkspaceIDE(QMainWindow):
 
         self.main_splitter.addWidget(left_tabs)
 
-        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.main_splitter.addWidget(self.right_splitter)
-
-        # Use custom styled tab widget
-        self.tabs = StyledTabWidget()
-        self.tabs.setTabsClosable(True)
-        self.tabs.setMovable(True)
-        self.tabs.tabCloseRequested.connect(self.close_tab)
-        self.tabs.currentChanged.connect(self.on_editor_tab_changed)
-
-        self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
-
-        from PyQt6.QtGui import QShortcut, QKeySequence
-        send_shortcut = QShortcut(QKeySequence("Ctrl+Shift+O"), self)
-        send_shortcut.activated.connect(self.send_to_ollama)
-
-        # Triggering QAction::event: Ambiguous shortcut overload: Ctrl+F
-        #find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
-        #find_shortcut.activated.connect(self.show_find_replace)
-
-        find_next_shortcut = QShortcut(QKeySequence("F3"), self)
-        find_next_shortcut.activated.connect(self.find_next)
-
-        find_prev_shortcut = QShortcut(QKeySequence("Shift+F3"), self)
-        find_prev_shortcut.activated.connect(self.find_previous)
-
-        replace_shortcut = QShortcut(QKeySequence("Ctrl+H"), self)
-        replace_shortcut.activated.connect(self.show_find_replace)
-
-        # Triggering QAction::event: Ambiguous shortcut overload: Ctrl+P
-        #quick_open_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
-        #quick_open_shortcut.activated.connect(self.show_quick_open)
-
+        # CENTER - Editor
         editor_container = QWidget()
         editor_layout = QVBoxLayout(editor_container)
         editor_layout.setContentsMargins(0, 0, 0, 0)
@@ -688,26 +646,51 @@ class WorkspaceIDE(QMainWindow):
         self.find_replace = FindReplaceWidget()
         editor_layout.addWidget(self.find_replace)
 
+        self.tabs = StyledTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.setMovable(True)
+        self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tabs.currentChanged.connect(self.on_editor_tab_changed)
+        self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
+
         editor_layout.addWidget(self.tabs)
 
-        self.right_splitter.addWidget(editor_container)
+        self.main_splitter.addWidget(editor_container)
 
-        self.bottom_tabs = QTabWidget()
-        terminal_font_size = self.settings.get('terminal_font_size', 10)
-        self.terminal = Terminal(font_size=terminal_font_size)
-        self.bottom_tabs.addTab(self.terminal, "Terminal")
-
+        # RIGHT SIDEBAR - Ollama Chat (like Cursor)
         self.ollama_widget = OllamaChatWidget(parent=self)
-        self.bottom_tabs.addTab(self.ollama_widget, "Ollama Chat")
+        self.ollama_widget.setMinimumWidth(300)
+        
+        # Add header to Ollama panel
+        ollama_container = QWidget()
+        ollama_layout = QVBoxLayout(ollama_container)
+        ollama_layout.setContentsMargins(5, 5, 5, 5)
+        ollama_layout.setSpacing(5)
+        
+        ollama_header = QLabel("🤖 AI Chat")
+        ollama_header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
+        ollama_layout.addWidget(ollama_header)
+        ollama_layout.addWidget(self.ollama_widget)
+        
+        self.main_splitter.addWidget(ollama_container)
 
-        self.right_splitter.addWidget(self.bottom_tabs)
-
+        # Set splitter proportions: [Left:1 | Center:4 | Right:1.5]
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 4)
+        self.main_splitter.setStretchFactor(2, 0)  # Start hidden
 
-        self.right_splitter.setStretchFactor(0, 3)
-        self.right_splitter.setStretchFactor(1, 1)
+        # Shortcuts
+        send_shortcut = QShortcut(QKeySequence("Ctrl+Shift+O"), self)
+        send_shortcut.activated.connect(self.send_to_ollama)
 
+        find_next_shortcut = QShortcut(QKeySequence("F3"), self)
+        find_next_shortcut.activated.connect(self.find_next)
+
+        find_prev_shortcut = QShortcut(QKeySequence("Shift+F3"), self)
+        find_prev_shortcut.activated.connect(self.find_previous)
+
+        # Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
 
@@ -732,6 +715,35 @@ class WorkspaceIDE(QMainWindow):
         self.language_label.setStyleSheet("color: #CCC; padding: 0 10px;")
         self.status_bar.addPermanentWidget(self.language_label)
 
+        # Hide Ollama panel by default
+        self.ollama_panel_visible = False
+        ollama_container.hide()
+
+    def toggle_ollama_panel(self):
+        """Toggle Ollama chat panel visibility"""
+        ollama_container = self.main_splitter.widget(2)
+        
+        if self.ollama_panel_visible:
+            ollama_container.hide()
+            self.ollama_panel_visible = False
+        else:
+            ollama_container.show()
+            self.ollama_panel_visible = True
+            # Restore reasonable size
+            sizes = self.main_splitter.sizes()
+            total = sum(sizes)
+            self.main_splitter.setSizes([
+                int(total * 0.15),  # Left
+                int(total * 0.55),  # Center
+                int(total * 0.30)   # Right
+            ])
+
+    def show_ollama_panel(self):
+        """Show Ollama panel if hidden"""
+        if not self.ollama_panel_visible:
+            self.toggle_ollama_panel()
+
+
     def ensure_workspace(self):
         if not self.workspace_path.exists():
             self.workspace_path.mkdir(parents=True)
@@ -744,12 +756,12 @@ class WorkspaceIDE(QMainWindow):
             path = Path(self.file_model.filePath(index))
 
             if path.is_dir():
-                new_file_action = menu.addAction("📄 New File")
-                new_folder_action = menu.addAction("📁 New Folder")
+                new_file_action = menu.addAction("ðŸ“„ New File")
+                new_folder_action = menu.addAction("ðŸ“ New Folder")
                 menu.addSeparator()
-                rename_action = menu.addAction("✏️ Rename")
+                rename_action = menu.addAction("âœï¸ Rename")
                 menu.addSeparator()
-                delete_action = menu.addAction("🗑️ Delete")
+                delete_action = menu.addAction("ðŸ—‘ï¸ Delete")
 
                 action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
@@ -762,11 +774,11 @@ class WorkspaceIDE(QMainWindow):
                 elif action == delete_action:
                     self.delete_item(path)
             else:
-                open_action = menu.addAction("📂 Open")
+                open_action = menu.addAction("ðŸ“‚ Open")
                 menu.addSeparator()
-                rename_action = menu.addAction("✏️ Rename")
+                rename_action = menu.addAction("âœï¸ Rename")
                 menu.addSeparator()
-                delete_action = menu.addAction("🗑️ Delete")
+                delete_action = menu.addAction("ðŸ—‘ï¸ Delete")
 
                 action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
@@ -777,8 +789,8 @@ class WorkspaceIDE(QMainWindow):
                 elif action == delete_action:
                     self.delete_item(path)
         else:
-            new_folder_action = menu.addAction("📁 New Folder")
-            new_file_action = menu.addAction("📄 New File")
+            new_folder_action = menu.addAction("ðŸ“ New Folder")
+            new_file_action = menu.addAction("ðŸ“„ New File")
 
             action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
@@ -990,17 +1002,27 @@ class WorkspaceIDE(QMainWindow):
 
         self.tabs.removeTab(index)
 
+    # def save_current_file(self):
+        # w = self.tabs.currentWidget()
+        # if isinstance(w, CodeEditor):
+            # if w.save_file():
+                # w.is_modified = False
+                # self.status_message.setText("File saved")
+                # QTimer.singleShot(2000, lambda: self.status_message.setText(""))
+                # idx = self.tabs.currentIndex()
+                # title = self.tabs.tabText(idx)
+                # if title.startswith('â— '):
+                    # self.tabs.setTabText(idx, title[2:])
+
     def save_current_file(self):
         w = self.tabs.currentWidget()
         if isinstance(w, CodeEditor):
             if w.save_file():
-                w.is_modified = False
+                w.document().setModified(False)
+                self.on_editor_modified(w)  # Force update title
+                
                 self.status_message.setText("File saved")
                 QTimer.singleShot(2000, lambda: self.status_message.setText(""))
-                idx = self.tabs.currentIndex()
-                title = self.tabs.tabText(idx)
-                if title.startswith('● '):
-                    self.tabs.setTabText(idx, title[2:])
 
     def send_to_ollama(self):
         current_widget = self.tabs.currentWidget()
@@ -1100,12 +1122,12 @@ class WorkspaceIDE(QMainWindow):
                 self.main_splitter.setSizes([explorer_width, total_width - explorer_width])
 
         if hasattr(self, 'saved_right_sizes') and self.saved_right_sizes:
-            self.right_splitter.setSizes(self.saved_right_sizes)
+            self.main_splitter.setSizes(self.saved_right_sizes)
         else:
             terminal_height = self.settings.get('terminal_height', 200)
-            total_height = self.right_splitter.height()
+            total_height = self.main_splitter.height()
             if total_height > terminal_height:
-                self.right_splitter.setSizes([total_height - terminal_height, terminal_height])
+                self.main_splitter.setSizes([total_height - terminal_height, terminal_height])
 
     def apply_settings(self):
         explorer_width = self.settings.get('explorer_width', 300)
@@ -1114,9 +1136,9 @@ class WorkspaceIDE(QMainWindow):
         self.main_splitter.setSizes([explorer_width, total - explorer_width])
 
         terminal_height = self.settings.get('terminal_height', 200)
-        current_sizes = self.right_splitter.sizes()
+        current_sizes = self.main_splitter.sizes()
         total = sum(current_sizes)
-        self.right_splitter.setSizes([total - terminal_height, terminal_height])
+        self.main_splitter.setSizes([total - terminal_height, terminal_height])
 
         editor_font_size = self.settings.get('editor_font_size', 11)
         for i in range(self.tabs.count()):
@@ -1141,13 +1163,13 @@ class WorkspaceIDE(QMainWindow):
                 open_files.append(editor.file_path)
 
         main_sizes = self.main_splitter.sizes()
-        right_sizes = self.right_splitter.sizes()
+        right_sizes = self.main_splitter.sizes()
 
         session_data = {
             'open_files': open_files,
             'active_index': active_index,
             'main_splitter_sizes': main_sizes,
-            'right_splitter_sizes': right_sizes,
+            'main_splitter_sizes': right_sizes,
             'window_geometry': {
                 'x': self.x(),
                 'y': self.y(),
@@ -1163,21 +1185,22 @@ class WorkspaceIDE(QMainWindow):
         except Exception as e:
             print(f"Error saving session: {e}")
 
+
     def restore_session(self):
         if not self.session_file.exists():
             return
-
+    
         try:
             with open(self.session_file, 'r') as f:
                 session_data = json.load(f)
-
+    
             open_files = session_data.get('open_files', [])
             active_index = session_data.get('active_index', 0)
-
+    
             editor_font_size = self.settings.get('editor_font_size', 11)
             tab_width = self.settings.get('tab_width', 4)
             show_line_numbers = self.settings.get('show_line_numbers', True)
-
+    
             geom = session_data.get('window_geometry', {})
             if geom:
                 if not geom.get('maximized', False):
@@ -1189,7 +1212,7 @@ class WorkspaceIDE(QMainWindow):
                     )
                 else:
                     self.showMaximized()
-
+    
             for file_info in open_files:
                 # Handle both old format (string) and new format (dict)
                 if isinstance(file_info, str):
@@ -1202,52 +1225,157 @@ class WorkspaceIDE(QMainWindow):
                     cursor_line = file_info.get('cursor_line', 0)
                     cursor_column = file_info.get('cursor_column', 0)
                     scroll_position = file_info.get('scroll_position', 0)
-
-                if Path(file_path).exists():
-                    editor = CodeEditor(font_size=editor_font_size, tab_width=tab_width, show_line_numbers=show_line_numbers)
+    
+                file_path_obj = Path(file_path)
+                if file_path_obj.exists():
+                    editor = CodeEditor(
+                        font_size=editor_font_size,
+                        tab_width=tab_width,
+                        show_line_numbers=show_line_numbers
+                    )
+    
+                    # Block signals during initial setup to prevent false modified signals
+                    editor.blockSignals(True)
+    
                     if editor.load_file(file_path):
-                        tab_index = self.tabs.addTab(editor, Path(file_path).name)
-                        # Set tooltip with full path
+                        tab_index = self.tabs.addTab(editor, file_path_obj.name)
                         self.tabs.setTabToolTip(tab_index, file_path)
-
+    
                         # Restore cursor position
                         cursor = editor.textCursor()
                         cursor.movePosition(QTextCursor.MoveOperation.Start)
-                        cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.MoveAnchor, cursor_line)
-                        cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, cursor_column)
+                        cursor.movePosition(
+                            QTextCursor.MoveOperation.Down,
+                            QTextCursor.MoveMode.MoveAnchor,
+                            cursor_line
+                        )
+                        cursor.movePosition(
+                            QTextCursor.MoveOperation.Right,
+                            QTextCursor.MoveMode.MoveAnchor,
+                            cursor_column
+                        )
                         editor.setTextCursor(cursor)
-
-                        # Restore scroll position (must be done after widget is shown)
+    
+                        # Explicitly clear modified flag (defensive)
+                        editor.document().setModified(False)
+    
+                        # Restore scroll position after widget is shown
                         def restore_scroll(ed=editor, pos=scroll_position):
                             scrollbar = ed.verticalScrollBar()
                             scrollbar.setValue(pos)
-
-                        # Use QTimer to restore scroll after layout is complete
+    
                         QTimer.singleShot(50, restore_scroll)
-
-                        # Connect text changed signal
-                        def on_text_changed(e=editor):
-                            if e.is_modified:
-                                self.on_editor_modified(e)
-
-                        editor.textChanged.connect(on_text_changed)
-
+    
+                    # Re-enable signals now that setup is complete
+                    editor.blockSignals(False)
+    
+                    # Connect textChanged only after unblocking and setup
+                    editor.textChanged.connect(
+                        lambda e=editor: self.on_editor_modified(e) if e.document().isModified() else None
+                    )
+    
             if 0 <= active_index < self.tabs.count():
                 self.tabs.setCurrentIndex(active_index)
-
+    
             self.saved_main_sizes = session_data.get('main_splitter_sizes', None)
-            self.saved_right_sizes = session_data.get('right_splitter_sizes', None)
-
+            self.saved_right_sizes = session_data.get('right_splitter_sizes', None)  # Fixed typo if present
+    
             if self.tabs.count() > 0:
                 self.status_message.setText(f"Restored {self.tabs.count()} file(s) with positions")
                 QTimer.singleShot(3000, lambda: self.status_message.setText(""))
-
+    
         except Exception as e:
             print(f"Error restoring session: {e}")
+
+    # def restore_session(self):
+        # if not self.session_file.exists():
+            # return
+
+        # try:
+            # with open(self.session_file, 'r') as f:
+                # session_data = json.load(f)
+
+            # open_files = session_data.get('open_files', [])
+            # active_index = session_data.get('active_index', 0)
+
+            # editor_font_size = self.settings.get('editor_font_size', 11)
+            # tab_width = self.settings.get('tab_width', 4)
+            # show_line_numbers = self.settings.get('show_line_numbers', True)
+
+            # geom = session_data.get('window_geometry', {})
+            # if geom:
+                # if not geom.get('maximized', False):
+                    # self.setGeometry(
+                        # geom.get('x', 100),
+                        # geom.get('y', 100),
+                        # geom.get('width', 1400),
+                        # geom.get('height', 900)
+                    # )
+                # else:
+                    # self.showMaximized()
+
+            # for file_info in open_files:
+                # # Handle both old format (string) and new format (dict)
+                # if isinstance(file_info, str):
+                    # file_path = file_info
+                    # cursor_line = 0
+                    # cursor_column = 0
+                    # scroll_position = 0
+                # else:
+                    # file_path = file_info.get('path')
+                    # cursor_line = file_info.get('cursor_line', 0)
+                    # cursor_column = file_info.get('cursor_column', 0)
+                    # scroll_position = file_info.get('scroll_position', 0)
+
+                # if Path(file_path).exists():
+                    # editor = CodeEditor(font_size=editor_font_size, tab_width=tab_width, show_line_numbers=show_line_numbers)
+
+                    # if editor.load_file(file_path):
+                        # tab_index = self.tabs.addTab(editor, Path(file_path).name)
+                        # # Set tooltip with full path
+                        # self.tabs.setTabToolTip(tab_index, file_path)
+
+                        # # Restore cursor position
+                        # cursor = editor.textCursor()
+                        # cursor.movePosition(QTextCursor.MoveOperation.Start)
+                        # cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.MoveAnchor, cursor_line)
+                        # cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, cursor_column)
+                        # editor.setTextCursor(cursor)
+
+                        # # Restore scroll position (must be done after widget is shown)
+                        # def restore_scroll(ed=editor, pos=scroll_position):
+                            # scrollbar = ed.verticalScrollBar()
+                            # scrollbar.setValue(pos)
+
+                        # # Use QTimer to restore scroll after layout is complete
+                        # QTimer.singleShot(50, restore_scroll)
+
+                        # # Connect text changed signal
+                        # def on_text_changed(e=editor):
+                            # if e.is_modified:
+                                # self.on_editor_modified(e)
+
+                        # editor.textChanged.connect(on_text_changed)
+
+            # if 0 <= active_index < self.tabs.count():
+                # self.tabs.setCurrentIndex(active_index)
+
+            # self.saved_main_sizes = session_data.get('main_splitter_sizes', None)
+            # self.saved_right_sizes = session_data.get('main_splitter_sizes', None)
+
+            # if self.tabs.count() > 0:
+                # self.status_message.setText(f"Restored {self.tabs.count()} file(s) with positions")
+                # QTimer.singleShot(3000, lambda: self.status_message.setText(""))
+
+        # except Exception as e:
+            # print(f"Error restoring session: {e}")
 
     def closeEvent(self, event):
         self.settings['active_projects'] = self.projects_panel.get_active_projects()
         self.save_settings()
+
+        #if hasattr(self.terminal, 'backend'):
+        #    self.terminal.backend.stop()
 
         if self.settings.get('restore_session', True):
             self.save_session()
@@ -1345,7 +1473,7 @@ class WorkspaceIDE(QMainWindow):
 
     def toggle_terminal(self):
         """Toggle terminal visibility"""
-        terminal_widget = self.right_splitter.widget(1)
+        terminal_widget = self.main_splitter.widget(1)
         if terminal_widget.isVisible():
             terminal_widget.hide()
         else:
@@ -1407,8 +1535,8 @@ class WorkspaceIDE(QMainWindow):
     def clear_terminal(self):
         """Clear terminal output"""
         self.terminal.clear()
-        self.terminal.append("=== Simple Terminal ===\n")
-        self.terminal.show_prompt()
+        #self.terminal.append("=== Simple Terminal ===\n")
+        #self.terminal.show_prompt()
 
     def show_about(self):
         """Show about dialog"""
@@ -1520,6 +1648,79 @@ class WorkspaceIDE(QMainWindow):
         current_widget = self.tabs.currentWidget()
         if isinstance(current_widget, CodeEditor):
             current_widget.unindent_selection()
+
+
+    def open_external_terminal(self, directory=None):
+        """Open system's default terminal in the given directory (or fallback to workspace/home)"""
+        
+        # Ensure directory is always a valid str path
+        if directory is None or not isinstance(directory, (str, os.PathLike)):
+            # Fallback to your workspace path, then home
+            from ide import WORKSPACE_PATH  # Adjust import if needed
+            directory = str(Path.home() / WORKSPACE_PATH)
+        
+        directory = str(directory)  # Convert PathLike to str if needed
+        
+        # Ensure the directory exists
+        if not os.path.isdir(directory):
+            QMessageBox.warning(self, "Terminal", f"Directory does not exist: {directory}")
+            return
+        
+        try:
+            if os.name == 'nt':  # Windows
+                # Use Windows Terminal if available, else cmd
+                try:
+                    subprocess.Popen(['wt', '-d', directory])
+                except FileNotFoundError:
+                    subprocess.Popen(['start', 'cmd', '/k', f'cd /d "{directory}"'], shell=True)
+            
+            elif sys.platform == 'darwin':  # macOS
+                # Use AppleScript to open Terminal.app in the directory
+                script = f'''
+                tell application "Terminal"
+                    do script "cd \\"{directory}\\""
+                    activate
+                end tell
+                '''
+                subprocess.Popen(['osascript', '-e', script])
+            
+            else:  # Linux / Unix
+                # List of terminals with their working-directory flag
+                terminals = [
+                    ('gnome-terminal', '--working-directory'),
+                    ('konsole', '--workdir'),
+                    ('xfce4-terminal', '--default-working-directory'),
+                    ('terminator', '--working-directory'),
+                    ('tilix', '--working-directory'),
+                    ('kitty', '--directory'),
+                    ('alacritty', '--working-directory'),
+                ]
+                
+                launched = False
+                for term, flag in terminals:
+                    try:
+                        subprocess.Popen([term, f'{flag}={directory}'] if flag else [term, '-e', f'cd "{directory}" && $SHELL'])
+                        launched = True
+                        break
+                    except FileNotFoundError:
+                        continue
+                
+                # Fallbacks without specific flag
+                if not launched:
+                    for term in ['xterm', 'urxvt', 'terminology']:
+                        try:
+                            subprocess.Popen([term, '-e', f'cd "{directory}" && exec $SHELL'])
+                            launched = True
+                            break
+                        except FileNotFoundError:
+                            continue
+                
+                if not launched:
+                    QMessageBox.warning(self, "Terminal", "No supported terminal emulator found on your system.")
+                    return
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open terminal: {str(e)}")
 
 
 def main():
