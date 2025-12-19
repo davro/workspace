@@ -10,6 +10,7 @@ WORKSPACE_ENV="workspace-env"
 
 REQUIREMENTS=(
   PyQt6
+  PyQt6-WebEngine
   markdown
 )
 

@@ -44,6 +44,9 @@ from PyQt6.QtCore import (
     QTimer,
 )
 
+from PyQt6.QtWidgets import QApplication  # Already imported above, but safe to repeat
+QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+
 from ide import VERSION, WORKSPACE_PATH
 from ide.core.CodeEditor import CodeEditor
 from ide.core.Plugin import PluginWidget, PluginManager
@@ -597,7 +600,7 @@ class WorkspaceIDE(QMainWindow):
         layout.addWidget(self.main_splitter)
 
         left_tabs = QTabWidget()
-        left_tabs.setMaximumWidth(500)
+        left_tabs.setMaximumWidth(450)
 
         explorer_widget = QWidget()
         explorer_layout = QVBoxLayout(explorer_widget)
@@ -617,10 +620,17 @@ class WorkspaceIDE(QMainWindow):
         self.tree_delegate = ProjectHighlightDelegate(self.tree)
         self.tree.setItemDelegate(self.tree_delegate)
 
-        self.tree.setColumnWidth(0, 200)
-        self.tree.setColumnWidth(1, 70)
-        self.tree.setColumnWidth(2, 80)
-        self.tree.setColumnWidth(3, 100)
+        # Show only Name and Type columns (hide Size and Date Modified)
+        self.tree.setColumnWidth(0, 450)  # Name - wider since it's main column
+        self.tree.setColumnHidden(1, True)  # Hide Size
+        self.tree.setColumnHidden(2, True)   # Hide Type
+        self.tree.setColumnHidden(3, True)  # Hide Date Modified
+
+		# OLD
+        # self.tree.setColumnWidth(0, 200)
+        # self.tree.setColumnWidth(1, 70)
+        # self.tree.setColumnWidth(2, 80)
+        # self.tree.setColumnWidth(3, 100)
 
         self.tree.doubleClicked.connect(self.open_file)
 
