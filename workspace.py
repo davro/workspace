@@ -239,16 +239,10 @@ class WorkspaceIDE(QMainWindow):
                 editor.cursorPositionChanged.connect(self.update_cursor_position)
 
     def on_editor_modified(self, editor):
-        for i in range(self.tabs.count()):
-            if self.tabs.widget(i) == editor:
-                current_text = self.tabs.tabText(i)
-                if editor.document().isModified():
-                    if not current_text.startswith('● '):
-                        self.tabs.setTabText(i, f"● {current_text}")
-                else:
-                    if current_text.startswith('● '):
-                        self.tabs.setTabText(i, current_text[2:])
-                break
+        index = self.tabs.indexOf(editor)
+        if index != -1:
+            self.tabs.set_tab_modified(index, editor.document().isModified())
+
 
     def update_cursor_position(self):
         current_widget = self.tabs.currentWidget()

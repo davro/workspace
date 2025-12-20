@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QTabBar, QTabWidget
 from PyQt6.QtGui import QPainter, QColor
 from PyQt6.QtCore import Qt
 
-
+ 
 class StyledTabBar(QTabBar):
     """Custom tab bar with active/inactive styling and modified indicators"""
 
@@ -46,7 +46,7 @@ class StyledTabBar(QTabBar):
                 margin: 2px;
                 width: 14px;
                 height: 14px;
-                border-radius: 7px;
+                border-radius: 3px;
                 background-color: #555555;
             }
 
@@ -104,6 +104,18 @@ class StyledTabBar(QTabBar):
 
         painter.end()
 
+    def tabMoved(self, from_index, to_index):
+        if from_index in self.modified_tabs:
+            self.modified_tabs.remove(from_index)
+            # Adjust for insertion point
+            new_index = to_index
+            if to_index > from_index:
+                new_index -= 1
+            self.modified_tabs.add(new_index)
+            self.update()
+    
+        super().tabMoved(from_index, to_index)
+
 
 class StyledTabWidget(QTabWidget):
     """Custom tab widget with styled tab bar"""
@@ -134,3 +146,6 @@ class StyledTabWidget(QTabWidget):
     def set_tab_modified(self, index, modified):
         """Mark a tab as modified"""
         self.custom_tab_bar.set_tab_modified(index, modified)
+
+
+
