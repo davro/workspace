@@ -31,6 +31,8 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QSpacerItem,
     QGridLayout,
+	QDialog,
+
 )
 from PyQt6.QtGui import (
     QAction,
@@ -545,12 +547,11 @@ class WorkspaceIDE(QMainWindow):
         run_menu.addAction(run_file_action)
 
         # Terminal menu
-        terminal_menu = menubar.addMenu("Terminal")
-
-        open_terminal_action = QAction("Open External Terminal", self)
-        open_terminal_action.setShortcut("Ctrl+Shift+T")
-        open_terminal_action.triggered.connect(self.open_external_terminal)
-        terminal_menu.addAction(open_terminal_action)
+        #terminal_menu = menubar.addMenu("Terminal")
+        #open_terminal_action = QAction("Open External Terminal", self)
+        #open_terminal_action.setShortcut("Ctrl+Shift+T")
+        #open_terminal_action.triggered.connect(self.open_external_terminal(str(self.workspace_path)))
+        #terminal_menu.addAction(open_terminal_action)
 
         self.plugins_menu = self.plugin_ui.create_plugin_menu(menubar)
 
@@ -1105,11 +1106,6 @@ class WorkspaceIDE(QMainWindow):
                 font.setPointSize(editor_font_size)
                 editor.setFont(font)
 
-        terminal_font_size = self.settings.get('terminal_font_size', 10)
-        font = self.terminal.font()
-        font.setPointSize(terminal_font_size)
-        self.terminal.setFont(font)
-
     def save_session(self):
         open_files = []
         active_index = self.tabs.currentIndex()
@@ -1245,88 +1241,6 @@ class WorkspaceIDE(QMainWindow):
         except Exception as e:
             print(f"Error restoring session: {e}")
 
-    # def restore_session(self):
-        # if not self.session_file.exists():
-            # return
-
-        # try:
-            # with open(self.session_file, 'r') as f:
-                # session_data = json.load(f)
-
-            # open_files = session_data.get('open_files', [])
-            # active_index = session_data.get('active_index', 0)
-
-            # editor_font_size = self.settings.get('editor_font_size', 11)
-            # tab_width = self.settings.get('tab_width', 4)
-            # show_line_numbers = self.settings.get('show_line_numbers', True)
-
-            # geom = session_data.get('window_geometry', {})
-            # if geom:
-                # if not geom.get('maximized', False):
-                    # self.setGeometry(
-                        # geom.get('x', 100),
-                        # geom.get('y', 100),
-                        # geom.get('width', 1400),
-                        # geom.get('height', 900)
-                    # )
-                # else:
-                    # self.showMaximized()
-
-            # for file_info in open_files:
-                # # Handle both old format (string) and new format (dict)
-                # if isinstance(file_info, str):
-                    # file_path = file_info
-                    # cursor_line = 0
-                    # cursor_column = 0
-                    # scroll_position = 0
-                # else:
-                    # file_path = file_info.get('path')
-                    # cursor_line = file_info.get('cursor_line', 0)
-                    # cursor_column = file_info.get('cursor_column', 0)
-                    # scroll_position = file_info.get('scroll_position', 0)
-
-                # if Path(file_path).exists():
-                    # editor = CodeEditor(font_size=editor_font_size, tab_width=tab_width, show_line_numbers=show_line_numbers)
-
-                    # if editor.load_file(file_path):
-                        # tab_index = self.tabs.addTab(editor, Path(file_path).name)
-                        # # Set tooltip with full path
-                        # self.tabs.setTabToolTip(tab_index, file_path)
-
-                        # # Restore cursor position
-                        # cursor = editor.textCursor()
-                        # cursor.movePosition(QTextCursor.MoveOperation.Start)
-                        # cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.MoveAnchor, cursor_line)
-                        # cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, cursor_column)
-                        # editor.setTextCursor(cursor)
-
-                        # # Restore scroll position (must be done after widget is shown)
-                        # def restore_scroll(ed=editor, pos=scroll_position):
-                            # scrollbar = ed.verticalScrollBar()
-                            # scrollbar.setValue(pos)
-
-                        # # Use QTimer to restore scroll after layout is complete
-                        # QTimer.singleShot(50, restore_scroll)
-
-                        # # Connect text changed signal
-                        # def on_text_changed(e=editor):
-                            # if e.is_modified:
-                                # self.on_editor_modified(e)
-
-                        # editor.textChanged.connect(on_text_changed)
-
-            # if 0 <= active_index < self.tabs.count():
-                # self.tabs.setCurrentIndex(active_index)
-
-            # self.saved_main_sizes = session_data.get('main_splitter_sizes', None)
-            # self.saved_right_sizes = session_data.get('main_splitter_sizes', None)
-
-            # if self.tabs.count() > 0:
-                # self.status_message.setText(f"Restored {self.tabs.count()} file(s) with positions")
-                # QTimer.singleShot(3000, lambda: self.status_message.setText(""))
-
-        # except Exception as e:
-            # print(f"Error restoring session: {e}")
 
     def closeEvent(self, event):
         self.settings['active_projects'] = self.projects_panel.get_active_projects()
@@ -1463,35 +1377,50 @@ class WorkspaceIDE(QMainWindow):
             current_widget.ensureCursorVisible()
 
     def run_current_file(self):
-        """Run the current file"""
+        """Run the current file in an external terminal"""
         current_widget = self.tabs.currentWidget()
         if not isinstance(current_widget, CodeEditor) or not current_widget.file_path:
             QMessageBox.warning(self, "No File", "No file open to run")
             return
 
-        file_path = Path(current_widget.file_path)
+        file_path = Path(current_widget.file_path).resolve()
 
-        # Switch to terminal
-        self.bottom_tabs.setCurrentIndex(0)
-
-        # Run based on file type
+        # Determine the command based on file type
         if file_path.suffix == '.py':
-            command = f"python3 {file_path}"
-        elif file_path.suffix == '.js':
-            command = f"node {file_path}"
+            command = f"python3 \"{file_path}\""
+        elif file_path.suffix in {'.php'}:
+            command = f"php \"{file_path}\""
+        elif file_path.suffix in {'.js', '.cjs', '.mjs'}:
+            command = f"node \"{file_path}\""
         elif file_path.suffix == '.sh':
-            command = f"bash {file_path}"
+            command = f"bash \"{file_path}\""
+        elif file_path.suffix in {'.html', '.htm'}:
+            # Open in default browser
+            import webbrowser
+            webbrowser.open(file_path.as_uri())
+            self.status_message.setText(f"Opened {file_path.name} in browser")
+            QTimer.singleShot(3000, lambda: self.status_message.setText(""))
+            return
         else:
             QMessageBox.information(
                 self,
                 "Run File",
-                f"Don't know how to run {file_path.suffix} files.\n\nPlease run manually in the terminal."
+                f"Don't know how to run {file_path.suffix} files automatically.\n\n"
+                f"You can run it manually in a terminal:\n\n{file_path}"
             )
-            return
+            # Still open terminal in the file's directory for convenience
+            command = None
+        # If no specific command, just open terminal in the file's directory
+        if command is None:
+            directory = file_path.parent
+        else:
+            directory = file_path.parent
 
-        # Execute in terminal
-        self.terminal.append(f"\n{command}\n")
-        self.terminal.execute_command(command)
+        self.open_external_terminal(str(directory), command)
+
+        if command:
+            self.status_message.setText(f"Running {file_path.name}...")
+            QTimer.singleShot(4000, lambda: self.status_message.setText(""))
 
     def clear_terminal(self):
         """Clear terminal output"""
@@ -1611,74 +1540,89 @@ class WorkspaceIDE(QMainWindow):
             current_widget.unindent_selection()
 
 
-    def open_external_terminal(self, directory=None):
-        """Open system's default terminal in the given directory (or fallback to workspace/home)"""
-
-        # Ensure directory is always a valid str path
-        if directory is None or not isinstance(directory, (str, os.PathLike)):
-            # Fallback to your workspace path, then home
-            from ide import WORKSPACE_PATH  # Adjust import if needed
+    def open_external_terminal(self, directory=None, command=None):
+        """Open system's default terminal in the given directory, optionally running a command"""
+        if directory is None:
+            from ide import WORKSPACE_PATH
             directory = str(Path.home() / WORKSPACE_PATH)
 
-        directory = str(directory)  # Convert PathLike to str if needed
+        directory = str(Path(directory).resolve())
 
-        # Ensure the directory exists
         if not os.path.isdir(directory):
             QMessageBox.warning(self, "Terminal", f"Directory does not exist: {directory}")
             return
 
         try:
             if os.name == 'nt':  # Windows
-                # Use Windows Terminal if available, else cmd
-                try:
+                if command:
+                    subprocess.Popen(['wt', 'new-tab', '--title', 'Run', 'cmd', '/c', command + ' & pause'], cwd=directory)
+                else:
                     subprocess.Popen(['wt', '-d', directory])
-                except FileNotFoundError:
-                    subprocess.Popen(['start', 'cmd', '/k', f'cd /d "{directory}"'], shell=True)
-
             elif sys.platform == 'darwin':  # macOS
-                # Use AppleScript to open Terminal.app in the directory
-                script = f'''
-                tell application "Terminal"
-                    do script "cd \\"{directory}\\""
-                    activate
-                end tell
-                '''
+                if command:
+                    script = f'''
+                    tell application "Terminal"
+                        do script "cd \\"{directory}\\" && {command} && exec $SHELL"
+                        activate
+                    end tell
+                    '''
+                else:
+                    script = f'''
+                    tell application "Terminal"
+                        do script "cd \\"{directory}\\""
+                        activate
+                    end tell
+                    '''
                 subprocess.Popen(['osascript', '-e', script])
-
             else:  # Linux / Unix
-                # List of terminals with their working-directory flag
-                terminals = [
+                launched = False
+
+                # Try common terminals that support --working-directory
+                for term, flag in [
                     ('gnome-terminal', '--working-directory'),
                     ('konsole', '--workdir'),
-                    ('xfce4-terminal', '--default-working-directory'),
-                    ('terminator', '--working-directory'),
+                    ('xfce4-terminal', '--working-directory'),
                     ('tilix', '--working-directory'),
                     ('kitty', '--directory'),
                     ('alacritty', '--working-directory'),
-                ]
-
-                launched = False
-                for term, flag in terminals:
+                    ('terminator', '--working-directory'),
+                ]:
                     try:
-                        subprocess.Popen([term, f'{flag}={directory}'] if flag else [term, '-e', f'cd "{directory}" && $SHELL'])
+                        if command:
+                            # Run command and keep terminal open
+                            subprocess.Popen([term, flag, directory, '--', 'bash', '-c', f'{command} && exec bash'])
+                        else:
+                            subprocess.Popen([term, flag, directory])
                         launched = True
                         break
                     except FileNotFoundError:
                         continue
 
-                # Fallbacks without specific flag
+                # Special handling for gnome-terminal if above didn't work (older versions)
+                if not launched and shutil.which('gnome-terminal'):
+                    try:
+                        if command:
+                            full_cmd = f"cd '{directory}' && {command} && exec bash"
+                            subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', full_cmd])
+                        else:
+                            subprocess.Popen(['gnome-terminal', '--working-directory=' + directory])
+                        launched = True
+                    except:
+                        pass
+
+                # Fallback: xterm or similar
                 if not launched:
-                    for term in ['xterm', 'urxvt', 'terminology']:
-                        try:
-                            subprocess.Popen([term, '-e', f'cd "{directory}" && exec $SHELL'])
-                            launched = True
-                            break
-                        except FileNotFoundError:
-                            continue
+                    try:
+                        if command:
+                            subprocess.Popen(['xterm', '-e', f'cd "{directory}" && {command} && exec $SHELL'])
+                        else:
+                            subprocess.Popen(['xterm', '-hold', '-e', f'cd "{directory}" && exec $SHELL'])
+                        launched = True
+                    except FileNotFoundError:
+                        pass
 
                 if not launched:
-                    QMessageBox.warning(self, "Terminal", "No supported terminal emulator found on your system.")
-                    return
+                    QMessageBox.warning(self, "Terminal", "Could not find a supported terminal emulator.")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open terminal: {str(e)}")

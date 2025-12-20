@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from ide.core.FileScanner import FileScannerThread
 
 
 class QuickOpenDialog(QDialog):

@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QTabBar, QTabWidget
 from PyQt6.QtGui import QPainter, QColor
 from PyQt6.QtCore import Qt
 
- 
+
 class StyledTabBar(QTabBar):
     """Custom tab bar with active/inactive styling and modified indicators"""
 
