@@ -35,6 +35,7 @@ from ide.core.managers.SessionManager import SessionManager
 from ide.core.managers.StatusBarManager import StatusBarManager
 from ide.core.managers.SettingsManager import SettingsManager
 from ide.core.managers.MenuManager import MenuManager
+from ide.core.managers.RecentFilesManager import RecentFilesManager
 
 
 class WorkspaceIDE(QMainWindow):
@@ -74,6 +75,10 @@ class WorkspaceIDE(QMainWindow):
         self.tab_manager = TabManager(self.tabs, self)
         self.session_manager = SessionManager(self.session_file, self)
         self.statusbar_manager = StatusBarManager(self.statusBar(), self)
+
+        # Initialize recent files manager
+        self.recent_files_manager = RecentFilesManager(self.settings_manager, self)
+
         self.menu_manager = MenuManager(self.menuBar(), self)
 
         # Expose status_message for compatibility
@@ -236,7 +241,10 @@ class WorkspaceIDE(QMainWindow):
     def _create_menus(self):
         """Create all menus using MenuManager"""
         self.menu_manager.style_menubar()
-        self.menu_manager.create_file_menu()
+        #self.menu_manager.create_file_menu()
+        # REPLACE create_file_menu() with:
+        self.menu_manager.create_file_menu_with_recent(self.recent_files_manager)
+
         self.menu_manager.create_edit_menu()
 
         # Selection menu

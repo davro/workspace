@@ -37,6 +37,104 @@ class MenuManager:
 
         return menu
 
+
+    def create_file_menu_with_recent(self, recent_files_manager):
+        """
+        Create File menu with Recent Files submenu
+
+        Args:
+            recent_files_manager: RecentFilesManager instance
+        """
+        menu = self.menubar.addMenu("File")
+        self.menus['file'] = menu
+
+        self._add_action(menu, "New File", "Ctrl+N", self.parent.create_new_file_handler)
+        self._add_action(menu, "New Folder", "Ctrl+Shift+N", self.parent.create_new_folder_handler)
+        menu.addSeparator()
+        self._add_action(menu, "Quick Open...", "Ctrl+P", self.parent.show_quick_open)
+
+        # Add Recent Files submenu with Ctrl+R shortcut
+        menu.addSeparator()
+        recent_files_action = menu.addAction("Recent Files")
+        recent_files_action.setShortcut("Ctrl+R")
+
+        # Create submenu (will be populated dynamically)
+        recent_menu = recent_files_manager.create_recent_files_menu(menu)
+        recent_files_action.setMenu(recent_menu)
+
+        # Store reference for dynamic updates
+        self.recent_files_menu = recent_menu
+        self.recent_files_action = recent_files_action
+
+        # Refresh menu before showing (to update with latest files)
+        menu.aboutToShow.connect(
+            lambda: self._refresh_recent_files_menu(recent_files_manager)
+        )
+
+        menu.addSeparator()
+        self._add_action(menu, "Save", "Ctrl+S", self.parent.save_current_file)
+        self._add_action(menu, "Save All", "Ctrl+Shift+S", self.parent.save_all_files)
+        menu.addSeparator()
+        self._add_action(menu, "Close Tab", "Ctrl+W", self.parent.close_current_tab)
+        self._add_action(menu, "Close All Tabs", "Ctrl+Shift+W", self.parent.close_all_tabs)
+        menu.addSeparator()
+        self._add_action(menu, "Preferences...", "Ctrl+,", self.parent.show_settings)
+        menu.addSeparator()
+        self._add_action(menu, "Exit", "Ctrl+Q", self.parent.close)
+
+        return menu
+
+    def _refresh_recent_files_menu(self, recent_files_manager):
+        """Refresh the recent files menu with current files"""
+        # Clear existing menu
+        self.recent_files_menu.clear()
+
+        # Recreate menu items
+        recent_files = recent_files_manager.get_recent_files()
+
+        if not recent_files:
+            no_files_action = self.recent_files_menu.addAction("No recent files")
+            no_files_action.setEnabled(False)
+        else:
+            # Add files with shortcuts
+            for i, file_path in enumerate(recent_files[:9]):
+                from pathlib import Path
+                from PyQt6.QtGui import QAction, QKeySequence
+
+                path = Path(file_path)
+                action = QAction(f"📄 {path.name}", self.parent)
+
+                if i < 9:
+                    action.setShortcut(QKeySequence(f"Ctrl+{i+1}"))
+
+                action.setToolTip(str(path))
+                action.triggered.connect(
+                    lambda checked=False, p=file_path: recent_files_manager._open_recent_file(p)
+                )
+                self.recent_files_menu.addAction(action)
+
+            # Add remaining files without shortcuts
+            if len(recent_files) > 9:
+                self.recent_files_menu.addSeparator()
+                for file_path in recent_files[9:]:
+                    from pathlib import Path
+                    from PyQt6.QtGui import QAction
+
+                    path = Path(file_path)
+                    action = QAction(f"📄 {path.name}", self.parent)
+                    action.setToolTip(str(path))
+                    action.triggered.connect(
+                        lambda checked=False, p=file_path: recent_files_manager._open_recent_file(p)
+                    )
+                    self.recent_files_menu.addAction(action)
+
+        # Add clear option
+        self.recent_files_menu.addSeparator()
+        clear_action = self.recent_files_menu.addAction("Clear Recent Files")
+        clear_action.triggered.connect(recent_files_manager._clear_and_update_menu)
+
+
+
     def create_edit_menu(self):
         """Create Edit menu"""
         menu = self.menubar.addMenu("Edit")

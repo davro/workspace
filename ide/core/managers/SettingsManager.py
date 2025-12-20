@@ -19,7 +19,8 @@ class SettingsManager:
         'show_line_numbers': True,
         'auto_save': False,
         'ollama_timeout': 180,
-        'active_projects': []
+        'active_projects': [],
+        'recent_files': []
     }
 
     def __init__(self, config_file):
