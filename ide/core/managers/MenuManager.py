@@ -147,6 +147,8 @@ class MenuManager:
         self._add_action(menu, "Copy", "Ctrl+C", self.parent.copy_current)
         self._add_action(menu, "Paste", "Ctrl+V", self.parent.paste_current)
         menu.addSeparator()
+        self._add_action(menu, "Duplicate Line", "Ctrl+D", self.parent.duplicate_line)
+        menu.addSeparator()
         self._add_action(menu, "Toggle Comment", "Ctrl+/", self.parent.toggle_comment)
         self._add_action(menu, "Find", "Ctrl+F", self.parent.show_find_replace)
         self._add_action(menu, "Replace", "Ctrl+H", self.parent.show_find_replace)

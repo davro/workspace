@@ -566,6 +566,14 @@ class WorkspaceIDE(QMainWindow):
         if isinstance(current_widget, CodeEditor):
             current_widget.toggle_comment()
 
+    def duplicate_line(self):
+        """Duplicate current line or selection"""
+        current_widget = self.tabs.currentWidget()
+        if isinstance(current_widget, CodeEditor):
+            current_widget.duplicate_line_or_selection()
+    
+
+
     # =====================================================================
     # View Operations
     # =====================================================================
@@ -873,6 +881,7 @@ class WorkspaceIDE(QMainWindow):
 <tr><td><b>Ctrl+C</b></td><td>Copy</td></tr>
 <tr><td><b>Ctrl+V</b></td><td>Paste</td></tr>
 <tr><td><b>Ctrl+A</b></td><td>Select All</td></tr>
+<tr><td><b>Ctrl+D</b></td><td>Duplicate Line/Selection</td></tr>
 <tr><td><b>Ctrl+F</b></td><td>Find</td></tr>
 <tr><td><b>Ctrl+H</b></td><td>Replace</td></tr>
 <tr><td><b>F3</b></td><td>Find Next</td></tr>

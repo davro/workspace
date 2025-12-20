@@ -318,3 +318,100 @@ class CodeEditor(QPlainTextEdit):
             return
 
         super().keyPressEvent(event)
+
+
+    # ============================================================================
+    # Duplicate Line
+    # ============================================================================
+        
+    def duplicate_line_or_selection(self):
+        """
+        Duplicate the current line or selected text
+        
+        Behavior:
+        - If text is selected: Duplicates the selection immediately after
+        - If no selection: Duplicates the current line below it
+        - Cursor moves to the duplicated content
+        - Preserves indentation and formatting
+        """
+        cursor = self.textCursor()
+        
+        # Start undo block for atomic operation
+        cursor.beginEditBlock()
+        
+        try:
+            if cursor.hasSelection():
+                # Duplicate selected text
+                self._duplicate_selection(cursor)
+            else:
+                # Duplicate current line
+                self._duplicate_line(cursor)
+        finally:
+            # End undo block
+            cursor.endEditBlock()
+        
+        # Update the cursor
+        self.setTextCursor(cursor)
+    
+    def _duplicate_selection(self, cursor):
+        """
+        Duplicate the selected text
+        
+        Args:
+            cursor: QTextCursor with selection
+        """
+        # Get the selected text
+        selected_text = cursor.selectedText()
+        
+        # QTextCursor uses U+2029 (paragraph separator) for newlines
+        # Convert to actual newlines for insertion
+        selected_text = selected_text.replace('\u2029', '\n')
+        
+        # Get selection boundaries
+        selection_start = cursor.selectionStart()
+        selection_end = cursor.selectionEnd()
+        
+        # Move to end of selection
+        cursor.setPosition(selection_end)
+        
+        # Insert newline and duplicated text
+        cursor.insertText('\n' + selected_text)
+        
+        # Select the newly inserted text
+        new_end = cursor.position()
+        new_start = new_end - len(selected_text)
+        cursor.setPosition(new_start)
+        cursor.setPosition(new_end, cursor.MoveMode.KeepAnchor)
+    
+    def _duplicate_line(self, cursor):
+        """
+        Duplicate the current line
+        
+        Args:
+            cursor: QTextCursor on current line
+        """
+        # Save current position in line
+        original_position = cursor.positionInBlock()
+        
+        # Select the entire current line
+        cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+        cursor.movePosition(cursor.MoveOperation.EndOfBlock, cursor.MoveMode.KeepAnchor)
+        
+        # Get the line text
+        line_text = cursor.selectedText()
+        
+        # Move to end of line
+        cursor.movePosition(cursor.MoveOperation.EndOfBlock)
+        
+        # Insert newline and duplicated line
+        cursor.insertText('\n' + line_text)
+        
+        # Position cursor at same column in duplicated line
+        cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+        cursor.movePosition(
+            cursor.MoveOperation.Right,
+            cursor.MoveMode.MoveAnchor,
+            min(original_position, len(line_text))
+        )
+    
+
