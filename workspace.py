@@ -217,7 +217,8 @@ class WorkspaceIDE(QMainWindow):
     def close_all_tabs(self):
         while self.tabs.count() > 0:
             editor = self.tabs.widget(0)
-            if isinstance(editor, CodeEditor) and editor.is_modified:
+            if isinstance(editor, CodeEditor) and editor.document().isModified():
+            #if isinstance(editor, CodeEditor) and editor.is_modified:
                 reply = QMessageBox.question(
                     self, "Unsaved Changes",
                     f"Save changes to {Path(editor.file_path).name}?",
@@ -1360,8 +1361,10 @@ class WorkspaceIDE(QMainWindow):
             if reply == QMessageBox.StandardButton.Save:
                 for i in range(self.tabs.count()):
                     editor = self.tabs.widget(i)
-                    if isinstance(editor, CodeEditor) and editor.is_modified:
+                    #if isinstance(editor, CodeEditor) and editor.is_modified:
+                    if isinstance(editor, CodeEditor) and editor.document().isModified():
                         editor.save_file()
+
                 event.accept()
             elif reply == QMessageBox.StandardButton.Discard:
                 event.accept()
