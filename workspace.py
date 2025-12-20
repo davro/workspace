@@ -197,10 +197,10 @@ class WorkspaceIDE(QMainWindow):
             if editor.save_file():  # This should call document().setModified(False)
                 # Force clear just in case
                 editor.document().setModified(False)
-                
+
                 # Trigger update (this will now correctly remove the dot)
                 self.on_editor_modified(editor)
-                
+
                 self.status_message.setText("File saved")
                 QTimer.singleShot(2000, lambda: self.status_message.setText(""))
 
@@ -236,16 +236,6 @@ class WorkspaceIDE(QMainWindow):
                 self.find_replace.set_editor(editor)
                 self.update_status_bar()
                 editor.cursorPositionChanged.connect(self.update_cursor_position)
-
-    # def on_editor_modified(self, editor):
-        # for i in range(self.tabs.count()):
-            # if self.tabs.widget(i) == editor:
-                # current_text = self.tabs.tabText(i)
-                # if editor.is_modified and not current_text.startswith('● '):
-                    # self.tabs.setTabText(i, f"● {current_text}")
-                # elif not editor.is_modified and current_text.startswith('● '):
-                    # self.tabs.setTabText(i, current_text[2:])
-                # break
 
     def on_editor_modified(self, editor):
         for i in range(self.tabs.count()):
@@ -661,18 +651,18 @@ class WorkspaceIDE(QMainWindow):
         # RIGHT SIDEBAR - Ollama Chat (like Cursor)
         self.ollama_widget = OllamaChatWidget(parent=self)
         self.ollama_widget.setMinimumWidth(300)
-        
+
         # Add header to Ollama panel
         ollama_container = QWidget()
         ollama_layout = QVBoxLayout(ollama_container)
         ollama_layout.setContentsMargins(5, 5, 5, 5)
         ollama_layout.setSpacing(5)
-        
+
         ollama_header = QLabel("🤖 AI Chat")
         ollama_header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
         ollama_layout.addWidget(ollama_header)
         ollama_layout.addWidget(self.ollama_widget)
-        
+
         self.main_splitter.addWidget(ollama_container)
 
         # Set splitter proportions: [Left:1 | Center:4 | Right:1.5]
@@ -722,7 +712,7 @@ class WorkspaceIDE(QMainWindow):
     def toggle_ollama_panel(self):
         """Toggle Ollama chat panel visibility"""
         ollama_container = self.main_splitter.widget(2)
-        
+
         if self.ollama_panel_visible:
             ollama_container.hide()
             self.ollama_panel_visible = False
@@ -942,14 +932,7 @@ class WorkspaceIDE(QMainWindow):
 
             # Set tooltip with full path
             self.tabs.setTabToolTip(tab_index, str(path))
-
-            # Connect text changed signal to track modifications
-            def on_text_changed():
-                if editor.is_modified:
-                    self.on_editor_modified(editor)
-
-            editor.textChanged.connect(on_text_changed)
-
+            editor.textChanged.connect(lambda: self.on_editor_modified(editor))
             self.tabs.setCurrentWidget(editor)
             self.update_status_bar()
 
@@ -974,45 +957,24 @@ class WorkspaceIDE(QMainWindow):
 
             # Set tooltip with full path
             self.tabs.setTabToolTip(tab_index, path)
-
-            # Connect text changed signal to track modifications
-            def on_text_changed():
-                if editor.is_modified:
-                    self.on_editor_modified(editor)
-
-            editor.textChanged.connect(on_text_changed)
-
+            editor.textChanged.connect(lambda: self.on_editor_modified(editor))
             self.tabs.setCurrentWidget(editor)
+
 
     def close_tab(self, index):
         editor = self.tabs.widget(index)
-        if isinstance(editor, CodeEditor) and editor.is_modified:
-            title = self.tabs.tabText(index)
-
+        if isinstance(editor, CodeEditor) and editor.document().isModified():
             reply = QMessageBox.question(
                 self, "Unsaved Changes",
-                f"Save changes to {title}?",
+                f"Save changes to {self.tabs.tabText(index)}?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
             )
             if reply == QMessageBox.StandardButton.Yes:
                 editor.save_file()
-                editor.is_modified = False
             elif reply == QMessageBox.StandardButton.Cancel:
                 return
 
         self.tabs.removeTab(index)
-
-    # def save_current_file(self):
-        # w = self.tabs.currentWidget()
-        # if isinstance(w, CodeEditor):
-            # if w.save_file():
-                # w.is_modified = False
-                # self.status_message.setText("File saved")
-                # QTimer.singleShot(2000, lambda: self.status_message.setText(""))
-                # idx = self.tabs.currentIndex()
-                # title = self.tabs.tabText(idx)
-                # if title.startswith('â— '):
-                    # self.tabs.setTabText(idx, title[2:])
 
     def save_current_file(self):
         w = self.tabs.currentWidget()
@@ -1020,7 +982,7 @@ class WorkspaceIDE(QMainWindow):
             if w.save_file():
                 w.document().setModified(False)
                 self.on_editor_modified(w)  # Force update title
-                
+
                 self.status_message.setText("File saved")
                 QTimer.singleShot(2000, lambda: self.status_message.setText(""))
 
@@ -1189,18 +1151,18 @@ class WorkspaceIDE(QMainWindow):
     def restore_session(self):
         if not self.session_file.exists():
             return
-    
+
         try:
             with open(self.session_file, 'r') as f:
                 session_data = json.load(f)
-    
+
             open_files = session_data.get('open_files', [])
             active_index = session_data.get('active_index', 0)
-    
+
             editor_font_size = self.settings.get('editor_font_size', 11)
             tab_width = self.settings.get('tab_width', 4)
             show_line_numbers = self.settings.get('show_line_numbers', True)
-    
+
             geom = session_data.get('window_geometry', {})
             if geom:
                 if not geom.get('maximized', False):
@@ -1212,7 +1174,7 @@ class WorkspaceIDE(QMainWindow):
                     )
                 else:
                     self.showMaximized()
-    
+
             for file_info in open_files:
                 # Handle both old format (string) and new format (dict)
                 if isinstance(file_info, str):
@@ -1225,7 +1187,7 @@ class WorkspaceIDE(QMainWindow):
                     cursor_line = file_info.get('cursor_line', 0)
                     cursor_column = file_info.get('cursor_column', 0)
                     scroll_position = file_info.get('scroll_position', 0)
-    
+
                 file_path_obj = Path(file_path)
                 if file_path_obj.exists():
                     editor = CodeEditor(
@@ -1233,14 +1195,14 @@ class WorkspaceIDE(QMainWindow):
                         tab_width=tab_width,
                         show_line_numbers=show_line_numbers
                     )
-    
+
                     # Block signals during initial setup to prevent false modified signals
                     editor.blockSignals(True)
-    
+
                     if editor.load_file(file_path):
                         tab_index = self.tabs.addTab(editor, file_path_obj.name)
                         self.tabs.setTabToolTip(tab_index, file_path)
-    
+
                         # Restore cursor position
                         cursor = editor.textCursor()
                         cursor.movePosition(QTextCursor.MoveOperation.Start)
@@ -1255,35 +1217,36 @@ class WorkspaceIDE(QMainWindow):
                             cursor_column
                         )
                         editor.setTextCursor(cursor)
-    
+
                         # Explicitly clear modified flag (defensive)
                         editor.document().setModified(False)
-    
+
                         # Restore scroll position after widget is shown
                         def restore_scroll(ed=editor, pos=scroll_position):
                             scrollbar = ed.verticalScrollBar()
                             scrollbar.setValue(pos)
-    
+
                         QTimer.singleShot(50, restore_scroll)
-    
+
                     # Re-enable signals now that setup is complete
                     editor.blockSignals(False)
-    
+
                     # Connect textChanged only after unblocking and setup
-                    editor.textChanged.connect(
-                        lambda e=editor: self.on_editor_modified(e) if e.document().isModified() else None
-                    )
-    
+                    #editor.textChanged.connect(
+                    #    lambda e=editor: self.on_editor_modified(e) if e.document().isModified() else None
+                    #)
+                    editor.textChanged.connect(lambda: self.on_editor_modified(editor))
+
             if 0 <= active_index < self.tabs.count():
                 self.tabs.setCurrentIndex(active_index)
-    
+
             self.saved_main_sizes = session_data.get('main_splitter_sizes', None)
             self.saved_right_sizes = session_data.get('right_splitter_sizes', None)  # Fixed typo if present
-    
+
             if self.tabs.count() > 0:
                 self.status_message.setText(f"Restored {self.tabs.count()} file(s) with positions")
                 QTimer.singleShot(3000, lambda: self.status_message.setText(""))
-    
+
         except Exception as e:
             print(f"Error restoring session: {e}")
 
@@ -1383,8 +1346,9 @@ class WorkspaceIDE(QMainWindow):
         unsaved_files = []
         for i in range(self.tabs.count()):
             editor = self.tabs.widget(i)
-            if isinstance(editor, CodeEditor) and editor.is_modified:
+            if isinstance(editor, CodeEditor) and editor.document().isModified():
                 unsaved_files.append(Path(editor.file_path).name)
+
 
         if unsaved_files:
             reply = QMessageBox.question(
@@ -1410,14 +1374,12 @@ class WorkspaceIDE(QMainWindow):
     # ---------------------- Menu Action Implementations ----------------------
 
     def save_all_files(self):
-        """Save all open modified files"""
         saved_count = 0
         for i in range(self.tabs.count()):
             editor = self.tabs.widget(i)
-            if isinstance(editor, CodeEditor) and editor.is_modified:
+            if isinstance(editor, CodeEditor) and editor.document().isModified():
                 if editor.save_file():
-                    editor.is_modified = False
-                    self.tabs.set_tab_modified(i, False)
+                    self.on_editor_modified(editor)
                     saved_count += 1
 
         if saved_count > 0:
@@ -1426,6 +1388,8 @@ class WorkspaceIDE(QMainWindow):
         else:
             self.status_message.setText("No files to save")
             QTimer.singleShot(2000, lambda: self.status_message.setText(""))
+
+
 
     def undo_current(self):
         """Undo in current editor"""
@@ -1652,20 +1616,20 @@ class WorkspaceIDE(QMainWindow):
 
     def open_external_terminal(self, directory=None):
         """Open system's default terminal in the given directory (or fallback to workspace/home)"""
-        
+
         # Ensure directory is always a valid str path
         if directory is None or not isinstance(directory, (str, os.PathLike)):
             # Fallback to your workspace path, then home
             from ide import WORKSPACE_PATH  # Adjust import if needed
             directory = str(Path.home() / WORKSPACE_PATH)
-        
+
         directory = str(directory)  # Convert PathLike to str if needed
-        
+
         # Ensure the directory exists
         if not os.path.isdir(directory):
             QMessageBox.warning(self, "Terminal", f"Directory does not exist: {directory}")
             return
-        
+
         try:
             if os.name == 'nt':  # Windows
                 # Use Windows Terminal if available, else cmd
@@ -1673,7 +1637,7 @@ class WorkspaceIDE(QMainWindow):
                     subprocess.Popen(['wt', '-d', directory])
                 except FileNotFoundError:
                     subprocess.Popen(['start', 'cmd', '/k', f'cd /d "{directory}"'], shell=True)
-            
+
             elif sys.platform == 'darwin':  # macOS
                 # Use AppleScript to open Terminal.app in the directory
                 script = f'''
@@ -1683,7 +1647,7 @@ class WorkspaceIDE(QMainWindow):
                 end tell
                 '''
                 subprocess.Popen(['osascript', '-e', script])
-            
+
             else:  # Linux / Unix
                 # List of terminals with their working-directory flag
                 terminals = [
@@ -1695,7 +1659,7 @@ class WorkspaceIDE(QMainWindow):
                     ('kitty', '--directory'),
                     ('alacritty', '--working-directory'),
                 ]
-                
+
                 launched = False
                 for term, flag in terminals:
                     try:
@@ -1704,7 +1668,7 @@ class WorkspaceIDE(QMainWindow):
                         break
                     except FileNotFoundError:
                         continue
-                
+
                 # Fallbacks without specific flag
                 if not launched:
                     for term in ['xterm', 'urxvt', 'terminology']:
@@ -1714,11 +1678,11 @@ class WorkspaceIDE(QMainWindow):
                             break
                         except FileNotFoundError:
                             continue
-                
+
                 if not launched:
                     QMessageBox.warning(self, "Terminal", "No supported terminal emulator found on your system.")
                     return
-        
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open terminal: {str(e)}")
 
