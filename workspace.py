@@ -317,9 +317,18 @@ class WorkspaceIDE(QMainWindow):
             if path.is_dir():
                 new_file_action = menu.addAction("New File")
                 new_folder_action = menu.addAction("New Folder")
+
                 menu.addSeparator()
+
+                copy_path_action = menu.addAction("📋 Copy Path")
+                copy_relative_path_action = menu.addAction("📋 Copy Relative Path")
+
+                menu.addSeparator()
+
                 rename_action = menu.addAction("Rename")
+
                 menu.addSeparator()
+
                 delete_action = menu.addAction("Delete")
 
                 action = menu.exec(self.tree.viewport().mapToGlobal(position))
@@ -378,16 +387,38 @@ class WorkspaceIDE(QMainWindow):
     def show_tab_context_menu(self, position):
         """Show context menu for tabs"""
         from PyQt6.QtWidgets import QMenu
-
+        from ide.core.CodeEditor import CodeEditor
+    
+        #print(f"Context menu position: {position}")
         tab_index = self.tabs.tabBar().tabAt(position)
-        if tab_index < 0:
+    
+        #print(f"Tab index: {tab_index}")
+        #if tab_index < 0:
+        #    print("No tab at position")
+        #    return
+    
+        editor = self.tabs.widget(tab_index)
+        #print(f"Editor type: {type(editor)}")
+        #print(f"Has file_path: {hasattr(editor, 'file_path')}")
+        #if hasattr(editor, 'file_path'):
+        #    print(f"File path: {editor.file_path}")
+        
+        # Check if it's a valid editor with file path
+        if not isinstance(editor, CodeEditor):
             return
-
+        if not hasattr(editor, 'file_path') or not editor.file_path:
+            return
+    
         menu = QMenu(self)
-
+    
         ai_menu = menu.addMenu("🤖 AI Actions")
         send_all_action = ai_menu.addAction("Send Entire File to Ollama")
         send_selection_action = ai_menu.addAction("Send Selection to Ollama")
+    
+        menu.addSeparator()
+    
+        copy_path_action = menu.addAction("📋 Copy File Path")
+        copy_relative_path_action = menu.addAction("📋 Copy Relative Path")
 
         menu.addSeparator()
 
@@ -398,7 +429,12 @@ class WorkspaceIDE(QMainWindow):
 
         action = menu.exec(self.tabs.tabBar().mapToGlobal(position))
 
-        if action == send_all_action:
+        # Handlers
+        if action == copy_path_action:
+            self.copy_file_path_to_clipboard(editor.file_path, relative=False)
+        elif action == copy_relative_path_action:
+            self.copy_file_path_to_clipboard(editor.file_path, relative=True)
+        elif action == send_all_action:
             self.tab_manager.send_tab_to_ollama(tab_index, send_all=True)
         elif action == send_selection_action:
             self.tab_manager.send_tab_to_ollama(tab_index, send_all=False)
@@ -961,6 +997,46 @@ class WorkspaceIDE(QMainWindow):
                     total_width - explorer_width,
                     0
                 ])
+
+
+    # ============================================================================
+    # Utility methods
+    # ============================================================================
+
+    def copy_file_path_to_clipboard(self, file_path, relative=False):
+        """
+        Copy file path to clipboard
+        
+        Args:
+            file_path: Absolute path to the file
+            relative: If True, copy path relative to workspace
+        """
+        from PyQt6.QtWidgets import QApplication
+        from pathlib import Path
+        
+        path = Path(file_path)
+        
+        if relative:
+            try:
+                # Get path relative to workspace
+                relative_path = path.relative_to(self.workspace_path)
+                path_to_copy = str(relative_path)
+                path_type = "Relative path"
+            except ValueError:
+                # File is outside workspace, use absolute
+                path_to_copy = str(path)
+                path_type = "Absolute path (file outside workspace)"
+        else:
+            path_to_copy = str(path)
+            path_type = "File path"
+        
+        # Copy to clipboard
+        clipboard = QApplication.clipboard()
+        clipboard.setText(path_to_copy)
+        
+        # Show confirmation in status bar
+        self.status_message.setText(f"{path_type} copied: {path_to_copy}")
+        QTimer.singleShot(3000, lambda: self.status_message.setText(""))
 
     # =====================================================================
     # Application Lifecycle

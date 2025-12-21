@@ -4,8 +4,8 @@
 
 from pathlib import Path
 from PyQt6.QtWidgets import QLabel, QStatusBar
+from PyQt6.QtCore import Qt
 from ide.core.CodeEditor import CodeEditor
-
 
 class StatusBarManager:
     """Manages status bar updates and information display"""
@@ -20,6 +20,11 @@ class StatusBarManager:
         self.encoding_label = QLabel("UTF-8")
         self.eol_label = QLabel("LF")
         self.language_label = QLabel("Plain Text")
+
+        # Make language label clickable with tooltip
+        self.language_label.setToolTip("Click to copy file path")
+        self.language_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.language_label.mousePressEvent = self._on_language_label_click
 
         self._setup_status_bar()
 
@@ -92,3 +97,17 @@ class StatusBarManager:
         self.update_cursor_position(editor)
 
 
+
+    def _on_language_label_click(self, event):
+        """Handle click on language label to copy file path"""
+        
+        # Get current editor
+        current_widget = self.parent.tabs.currentWidget()
+        if not isinstance(current_widget, CodeEditor) or not current_widget.file_path:
+            return
+        
+        # Left click = absolute path, Right click = relative path
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.parent.copy_file_path_to_clipboard(current_widget.file_path, relative=False)
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.parent.copy_file_path_to_clipboard(current_widget.file_path, relative=True)
