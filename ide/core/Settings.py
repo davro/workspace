@@ -10,13 +10,6 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-# If you're using PySide6 instead, replace the imports above with:
-# from PySide6.QtWidgets import (
-#     QDialog, QVBoxLayout, QFormLayout, QSpinBox,
-#     QCheckBox, QDialogButtonBox, QLabel
-# )
-# from PySide6.QtCore import Qt
-
 
 class SettingsDialog(QDialog):
     """Settings dialog for IDE configuration"""
@@ -25,7 +18,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("IDE Settings")
         self.setMinimumWidth(500)
-        self.setModal(True)  # Good practice: block interaction with main window
+        self.setModal(True)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -52,6 +45,14 @@ class SettingsDialog(QDialog):
         self.tab_width.setSuffix(" spaces")
         form.addRow("Tab Width:", self.tab_width)
 
+        # Gutter Width - FIXED: use 'form' instead of 'editor_layout'
+        self.gutter_spin = QSpinBox()
+        self.gutter_spin.setRange(0, 50)
+        self.gutter_spin.setValue(10)
+        self.gutter_spin.setSuffix(" px")
+        self.gutter_spin.setToolTip("Padding between line numbers and text")
+        form.addRow("Gutter Width (padding):", self.gutter_spin)
+
         # Checkboxes
         self.restore_session = QCheckBox()
         self.restore_session.setChecked(True)
@@ -73,8 +74,6 @@ class SettingsDialog(QDialog):
         form.addRow("Ollama Request Timeout:", self.ollama_timeout)
 
         layout.addLayout(form)
-
-        # Add some spacing before buttons
         layout.addStretch(1)
 
         # Buttons
@@ -93,6 +92,7 @@ class SettingsDialog(QDialog):
             'tab_width': self.tab_width.value(),
             'restore_session': self.restore_session.isChecked(),
             'show_line_numbers': self.show_line_numbers.isChecked(),
+            'gutter_width': self.gutter_spin.value(),
             'auto_save': self.auto_save.isChecked(),
             'ollama_timeout': self.ollama_timeout.value(),
         }
@@ -102,8 +102,8 @@ class SettingsDialog(QDialog):
         self.explorer_width.setValue(settings.get('explorer_width', 300))
         self.editor_font_size.setValue(settings.get('editor_font_size', 11))
         self.tab_width.setValue(settings.get('tab_width', 4))
+        self.gutter_spin.setValue(settings.get('gutter_width', 10))
         self.restore_session.setChecked(settings.get('restore_session', True))
         self.show_line_numbers.setChecked(settings.get('show_line_numbers', True))
         self.auto_save.setChecked(settings.get('auto_save', False))
         self.ollama_timeout.setValue(settings.get('ollama_timeout', 180))
-

@@ -40,7 +40,7 @@ from ide.core.managers.RecentFilesManager import RecentFilesManager
 
 class WorkspaceIDE(QMainWindow):
     """
-    Refactored WorkspaceIDE - Main orchestrator class
+    WorkspaceIDE - Main orchestrator class
 
     This class now delegates responsibilities to manager classes:
     - FileManager: File operations
@@ -835,29 +835,102 @@ class WorkspaceIDE(QMainWindow):
     # =====================================================================
 
     def show_settings(self):
-        """Show settings dialog"""
+        # """Show settings dialog"""
+        # dialog = SettingsDialog(self)
+        # dialog.set_settings(self.settings_manager.settings)
+
+        # if dialog.exec() == QDialog.DialogCode.Accepted:
+            # self.settings_manager.update(dialog.get_settings())
+            # self.settings_manager.save()
+            # self.apply_settings()
+            # QMessageBox.information(
+                # self,
+                # "Settings Saved",
+                # "Settings have been saved. Some changes may require restart."
+            # )
+        """Show settings dialog and apply changes immediately"""
+        from PyQt6.QtWidgets import QDialog, QMessageBox
+        
         dialog = SettingsDialog(self)
         dialog.set_settings(self.settings_manager.settings)
-
+        
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.settings_manager.update(dialog.get_settings())
+            # Get new settings
+            new_settings = dialog.get_settings()
+            
+            # Check what changed
+            old_settings = self.settings_manager.settings.copy()
+            
+            # Update settings
+            self.settings_manager.update(new_settings)
             self.settings_manager.save()
-            self.apply_settings()
+            
+            # Apply settings immediately (no restart needed)
+            self.apply_settings_live(old_settings, new_settings)
+            
             QMessageBox.information(
                 self,
-                "Settings Saved",
-                "Settings have been saved. Some changes may require restart."
+                "Settings Applied",
+                "Settings have been applied immediately to all open editors."
             )
 
+
+    # def apply_settings(self):
+        # """Apply current settings"""
+        # editor_font_size = self.settings_manager.get('editor_font_size', 11)
+        # for i in range(self.tabs.count()):
+            # editor = self.tabs.widget(i)
+            # if isinstance(editor, CodeEditor):
+                # font = editor.font()
+                # font.setPointSize(editor_font_size)
+                # editor.setFont(font)
+
+    # REMOVE or UPDATE the old apply_settings method:
     def apply_settings(self):
-        """Apply current settings"""
-        editor_font_size = self.settings_manager.get('editor_font_size', 11)
+        """
+        Apply settings (legacy method - now just calls apply_settings_live)
+        Kept for compatibility with other code
+        """
+        # Just apply to all open editors
+        settings = self.settings_manager.settings
+        self.apply_settings_live({}, settings)
+
+
+    def apply_settings_live(self, old_settings, new_settings):
+        """
+        Apply settings changes to all open editors immediately
+        
+        Args:
+            old_settings: Previous settings dict
+            new_settings: New settings dict
+        """
+        from ide.core.CodeEditor import CodeEditor
+        
+        # Check what changed
+        font_changed = old_settings.get('editor_font_size') != new_settings.get('editor_font_size')
+        tab_changed = old_settings.get('tab_width') != new_settings.get('tab_width')
+        line_numbers_changed = old_settings.get('show_line_numbers') != new_settings.get('show_line_numbers')
+        gutter_changed = old_settings.get('gutter_width') != new_settings.get('gutter_width')
+        
+        # Apply to all open editors
         for i in range(self.tabs.count()):
             editor = self.tabs.widget(i)
             if isinstance(editor, CodeEditor):
-                font = editor.font()
-                font.setPointSize(editor_font_size)
-                editor.setFont(font)
+                if font_changed:
+                    editor.set_font_size(new_settings.get('editor_font_size', 11))
+                
+                if tab_changed:
+                    editor.set_tab_width(new_settings.get('tab_width', 4))
+                
+                if line_numbers_changed:
+                    editor.set_show_line_numbers(new_settings.get('show_line_numbers', True))
+                
+                if gutter_changed:
+                    editor.set_gutter_width(new_settings.get('gutter_width', 10))
+        
+        # Update status bar if needed
+        if font_changed or tab_changed or line_numbers_changed or gutter_changed:
+            self.statusbar_manager.update_file_info(self.tabs.currentWidget())
 
     def show_documentation(self):
         """Show documentation"""

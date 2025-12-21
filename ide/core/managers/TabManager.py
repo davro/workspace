@@ -15,35 +15,7 @@ class TabManager:
         self.tabs = tabs_widget
         self.parent = parent
 
-    # def open_file_by_path(self, path, settings=None):
-        # """Open a file in a new tab or switch to existing tab"""
-        # # Check if already open
-        # for i in range(self.tabs.count()):
-            # widget = self.tabs.widget(i)
-            # if isinstance(widget, CodeEditor) and widget.file_path == str(path):
-                # self.tabs.setCurrentIndex(i)
-                # return widget
 
-        # # Create new editor
-        # if settings is None:
-            # settings = {}
-
-        # editor = CodeEditor(
-            # font_size=settings.get('editor_font_size', 11),
-            # tab_width=settings.get('tab_width', 4),
-            # show_line_numbers=settings.get('show_line_numbers', True)
-        # )
-
-        # if editor.load_file(str(path)):
-            # tab_index = self.tabs.addTab(editor, path.name)
-            # self.tabs.setTabToolTip(tab_index, str(path))
-            # editor.textChanged.connect(lambda: self.parent.on_editor_modified(editor))
-            # self.tabs.setCurrentWidget(editor)
-            # return editor
-
-        # return None
-
-    
     def open_file_by_path(self, path, settings=None):
         """Open a file in a new tab or switch to existing tab"""
         # Check if already open
@@ -52,7 +24,7 @@ class TabManager:
             if isinstance(widget, CodeEditor) and widget.file_path == str(path):
                 self.tabs.setCurrentIndex(i)
                 
-                # ADD THIS: Track in recent files when switching to existing tab
+                # Track in recent files when switching to existing tab
                 if hasattr(self.parent, 'recent_files_manager'):
                     self.parent.recent_files_manager.add_file(str(path))
                 
@@ -65,7 +37,8 @@ class TabManager:
         editor = CodeEditor(
             font_size=settings.get('editor_font_size', 11),
             tab_width=settings.get('tab_width', 4),
-            show_line_numbers=settings.get('show_line_numbers', True)
+            show_line_numbers=settings.get('show_line_numbers', True),
+            gutter_width=settings.get('gutter_width', 10)  # ADD THIS
         )
         
         if editor.load_file(str(path)):
@@ -74,7 +47,7 @@ class TabManager:
             editor.textChanged.connect(lambda: self.parent.on_editor_modified(editor))
             self.tabs.setCurrentWidget(editor)
             
-            # ADD THIS: Track in recent files when opening new file
+            # Track in recent files when opening new file
             if hasattr(self.parent, 'recent_files_manager'):
                 self.parent.recent_files_manager.add_file(str(path))
             

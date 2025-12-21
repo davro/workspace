@@ -20,7 +20,9 @@ class SettingsManager:
         'auto_save': False,
         'ollama_timeout': 180,
         'active_projects': [],
-        'recent_files': []
+        'recent_files': [],
+        'gutter_width': 10
+
     }
 
     def __init__(self, config_file):

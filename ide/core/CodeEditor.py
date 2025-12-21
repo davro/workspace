@@ -1,15 +1,17 @@
 from pathlib import Path
 
-from PyQt6.QtWidgets import QPlainTextEdit, QMessageBox, QWidget, QTextEdit
+from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
 from PyQt6.QtGui import (
-    QFont,
-    QPainter,
-    QColor,
-    QTextCursor,
-    QTextFormat,
-    QTextOption,
+    QColor, 
+    QPainter, 
+    QTextFormat, 
+    QFont, 
+    QSyntaxHighlighter, 
+    QTextCharFormat,
+    QFontMetricsF,
+    QTextCursor
 )
-from PyQt6.QtCore import Qt, QSize, QRect
+from PyQt6.QtCore import Qt, QRect, QSize
 
 from ide.core.SyntaxHighlighter import PythonHighlighter
 
@@ -26,7 +28,19 @@ class LineNumberArea(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
-    def __init__(self, font_size=11, tab_width=4, show_line_numbers=True):
+    # def __init__(self, font_size=11, tab_width=4, 
+    def __init__(self, file_path=None, font_size=11, tab_width=4, 
+				show_line_numbers=True, gutter_width=10):
+        """
+        Initialize code editor
+        
+        Args:
+            file_path: Path to file to load
+            font_size: Font size in points
+            tab_width: Tab width in spaces
+            show_line_numbers: Show line numbers
+            gutter_width: Gutter width (padding) in pixels between line numbers and text
+        """
         super().__init__()
 
         # Font and styling
@@ -38,16 +52,28 @@ class CodeEditor(QPlainTextEdit):
         )
 
         # Tab width in spaces
-        char_width = self.fontMetrics().horizontalAdvance(' ')
-        self.setTabStopDistance(tab_width * char_width)
+        #char_width = self.fontMetrics().horizontalAdvance(' ')
+        #self.setTabStopDistance(tab_width * char_width)
+
+        # Tab settings
+        self.setTabStopDistance(
+            QFontMetricsF(self.font()).horizontalAdvance(' ') * tab_width
+        )
 
         # State
         self.file_path = None
         self.highlighter = None
         self.show_line_numbers = show_line_numbers
+        self.gutter_width = gutter_width
 
         # Line number area
-        self.line_number_area = LineNumberArea(self)
+        #self.line_number_area = LineNumberArea(self)
+        self.line_number_area = LineNumberArea(self) if show_line_numbers else None
+
+        # Connect signals
+        if self.line_number_area:
+            self.blockCountChanged.connect(self.update_line_number_area_width)
+            self.updateRequest.connect(self.update_line_number_area)
 
         # Connections for line numbers and highlighting
         self.blockCountChanged.connect(self.update_line_number_area_width)
@@ -58,34 +84,147 @@ class CodeEditor(QPlainTextEdit):
         # Notify parent IDE whenever the document modified state changes
         self.textChanged.connect(self.on_text_changed)
 
+        # Load file if provided
+        if file_path:
+            self.load_file(file_path)
+
     # ------------------------------------------------------------------
     # Line Number Area
     # ------------------------------------------------------------------
-    def line_number_area_width(self):
-        if not self.show_line_numbers:
-            return 0
-        digits = len(str(max(1, self.blockCount())))
-        space = 3 + self.fontMetrics().horizontalAdvance('9') * digits
-        return space
 
     def update_line_number_area_width(self, _):
-        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+        """Update the viewport margins to accommodate line numbers + gutter"""
+        # Always add gutter width as left margin, even when line numbers are hidden
+        left_margin = self.line_number_area_width()
+        self.setViewportMargins(left_margin, 0, 0, 0)
+
+
+    def line_number_area_width(self):
+        """Calculate the width needed for line numbers + gutter"""
+        if not self.show_line_numbers or not self.line_number_area:
+            # Even without line numbers, add gutter for spacing
+            return self.gutter_width
+        
+        digits = len(str(max(1, self.blockCount())))
+        # Width = left_padding(3) + digit_width * digits + gutter_width
+        space = 3 + self.fontMetrics().horizontalAdvance('9') * digits + self.gutter_width
+        return space
+
 
     def update_line_number_area(self, rect, dy):
+        """Update the line number area when the editor scrolls or updates"""
+        # ADD THIS CHECK at the beginning
+        if not self.line_number_area:
+            return
+        
         if dy:
             self.line_number_area.scroll(0, dy)
         else:
             self.line_number_area.update(
                 0, rect.y(), self.line_number_area.width(), rect.height()
             )
+    
         if rect.contains(self.viewport().rect()):
             self.update_line_number_area_width(0)
 
+
+    def set_gutter_width(self, width):
+        """
+        Set the gutter width and update display
+        
+        Args:
+            width: Gutter width in pixels
+        """
+        self.gutter_width = width
+        self.update_line_number_area_width(0)
+        if self.line_number_area:
+            self.line_number_area.update()
+
+
+    def set_show_line_numbers(self, show):
+        """
+        Toggle line numbers display
+        
+        Args:
+            show: True to show line numbers, False to hide
+        """
+        self.show_line_numbers = show
+        
+        if show and not self.line_number_area:
+            # Create line number area
+            self.line_number_area = LineNumberArea(self)
+            self.blockCountChanged.connect(self.update_line_number_area_width)
+            self.updateRequest.connect(self.update_line_number_area)
+            self.line_number_area.show()
+        elif not show and self.line_number_area:
+            # Hide line number area
+            self.line_number_area.hide()
+        
+        self.update_line_number_area_width(0)
+
+
+    def set_font_size(self, size):
+        """
+        Set font size and update display
+        
+        Args:
+            size: Font size in points
+        """
+        font = self.font()
+        font.setPointSize(size)
+        self.setFont(font)
+        
+        # Update tab stops for new font size
+        tab_width = int(self.tabStopDistance() / 
+                       QFontMetricsF(font).horizontalAdvance(' '))
+        self.setTabStopDistance(
+            QFontMetricsF(font).horizontalAdvance(' ') * tab_width
+        )
+        
+        # Update line number area
+        self.update_line_number_area_width(0)
+        if self.line_number_area:
+            self.line_number_area.update()
+
+
+    def set_tab_width(self, width):
+        """
+        Set tab width and update display
+        
+        Args:
+            width: Tab width in spaces
+        """
+        self.setTabStopDistance(
+            QFontMetricsF(self.font()).horizontalAdvance(' ') * width
+        )
+
+
     def resizeEvent(self, event):
+        """Handle resize events to update line number area"""
         super().resizeEvent(event)
+        
+        if not self.line_number_area:
+            return
+        
         cr = self.contentsRect()
-        width = self.line_number_area_width()
-        self.line_number_area.setGeometry(cr.left(), cr.top(), width, cr.height())
+        # Line number area width should NOT include the gutter in its geometry
+        # The gutter is spacing AFTER the line numbers
+        digits = len(str(max(1, self.blockCount())))
+        line_number_width = 3 + self.fontMetrics().horizontalAdvance('9') * digits
+        
+        self.line_number_area.setGeometry(
+            QRect(cr.left(), cr.top(), line_number_width, cr.height())
+        )
+
+    def paint_line_numbers(self, event):
+        """Paint line numbers in the line number area"""
+        # ADD THIS CHECK
+        if not self.line_number_area:
+            return
+        
+        painter = QPainter(self.line_number_area)
+        painter.fillRect(event.rect(), QColor("#313335"))
+        # ... rest of painting code
 
     def line_number_area_paint_event(self, event):
         painter = QPainter(self.line_number_area)
