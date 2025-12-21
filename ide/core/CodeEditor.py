@@ -552,5 +552,3 @@ class CodeEditor(QPlainTextEdit):
             cursor.MoveMode.MoveAnchor,
             min(original_position, len(line_text))
         )
-    
-

@@ -73,6 +73,14 @@ class SettingsDialog(QDialog):
         self.ollama_timeout.setSuffix(" seconds")
         form.addRow("Ollama Request Timeout:", self.ollama_timeout)
 
+        # Tab Switcher 
+        self.tab_switcher_mru = QCheckBox()
+        self.tab_switcher_mru.setChecked(True)
+        self.tab_switcher_mru.setToolTip(
+            "Ctrl+Tab cycles through tabs in recently used order (like VS Code)"
+        )
+        form.addRow("Recent Order Tab Switching:", self.tab_switcher_mru)
+
         layout.addLayout(form)
         layout.addStretch(1)
 
@@ -95,6 +103,7 @@ class SettingsDialog(QDialog):
             'gutter_width': self.gutter_spin.value(),
             'auto_save': self.auto_save.isChecked(),
             'ollama_timeout': self.ollama_timeout.value(),
+            'tab_switcher_mru': self.tab_switcher_mru.isChecked(),
         }
 
     def set_settings(self, settings: dict):
@@ -107,3 +116,5 @@ class SettingsDialog(QDialog):
         self.show_line_numbers.setChecked(settings.get('show_line_numbers', True))
         self.auto_save.setChecked(settings.get('auto_save', False))
         self.ollama_timeout.setValue(settings.get('ollama_timeout', 180))
+        self.tab_switcher_mru.setChecked(settings.get('tab_switcher_mru', True))
+

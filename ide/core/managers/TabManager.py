@@ -73,6 +73,10 @@ class TabManager:
             elif reply == QMessageBox.StandardButton.Cancel:
                 return False
 
+        # Update tab order tracking
+        if hasattr(self.parent, 'tab_order_manager'):
+            self.parent.tab_order_manager.remove_tab(index)
+
         self.tabs.removeTab(index)
         return True
 

@@ -81,6 +81,10 @@ class WorkspaceIDE(QMainWindow):
 
         self.menu_manager = MenuManager(self.menuBar(), self)
 
+        # Initialize tab order manager
+        from ide.core.managers.TabOrderManager import TabOrderManager
+        self.tab_order_manager = TabOrderManager()
+
         # Expose status_message for compatibility
         self.status_message = self.statusbar_manager.status_message
 
@@ -226,17 +230,56 @@ class WorkspaceIDE(QMainWindow):
 
         self.main_splitter.addWidget(ollama_container)
 
+    # def _setup_shortcuts(self):
+        # """Setup keyboard shortcuts"""
+        # shortcuts = [
+            # ("Ctrl+Shift+O", self.send_to_ollama),
+            # ("F3", self.find_next),
+            # ("Shift+F3", self.find_previous),
+
+            # #("Ctrl+Shift+C", self.copy_current_file_path),
+            # # REMOVE old Ctrl+Tab if it exists
+            # # ADD THIS: Tab switcher shortcuts
+            # ("Ctrl+Tab", self.show_tab_switcher),
+            # ("Ctrl+Shift+Tab", self.show_tab_switcher),  # Same handler, dialog handles direction
+        # ]
+
+        # for key, callback in shortcuts:
+            # shortcut = QShortcut(QKeySequence(key), self)
+            # shortcut.activated.connect(callback)
+
+
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts"""
         shortcuts = [
             ("Ctrl+Shift+O", self.send_to_ollama),
             ("F3", self.find_next),
             ("Shift+F3", self.find_previous),
+            # Tab switcher with popup
+            ("Ctrl+Tab", self.show_tab_switcher),
+            # Quick cycle backwards (no popup)
+            ("Ctrl+Shift+Tab", self.cycle_tabs_backward),
         ]
 
         for key, callback in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(callback)
+
+    # Add this new method:
+    def cycle_tabs_backward(self):
+        """Cycle backwards through tabs in recent order (no popup)"""
+        if self.tabs.count() < 2:
+            return
+
+        current_index = self.tabs.currentIndex()
+        recent_order = self.tab_order_manager.get_recent_order(current_index)
+
+        # Get next tab in recent order (backwards = second item, or wrap to last)
+        if len(recent_order) > 1:
+            next_tab = recent_order[-1]  # Last in recent order = oldest
+            self.tabs.setCurrentIndex(next_tab)
+            self.tab_order_manager.record_access(next_tab)
+
 
     def _create_menus(self):
         """Create all menus using MenuManager"""
@@ -388,35 +431,35 @@ class WorkspaceIDE(QMainWindow):
         """Show context menu for tabs"""
         from PyQt6.QtWidgets import QMenu
         from ide.core.CodeEditor import CodeEditor
-    
+
         #print(f"Context menu position: {position}")
         tab_index = self.tabs.tabBar().tabAt(position)
-    
+
         #print(f"Tab index: {tab_index}")
         #if tab_index < 0:
         #    print("No tab at position")
         #    return
-    
+
         editor = self.tabs.widget(tab_index)
         #print(f"Editor type: {type(editor)}")
         #print(f"Has file_path: {hasattr(editor, 'file_path')}")
         #if hasattr(editor, 'file_path'):
         #    print(f"File path: {editor.file_path}")
-        
+
         # Check if it's a valid editor with file path
         if not isinstance(editor, CodeEditor):
             return
         if not hasattr(editor, 'file_path') or not editor.file_path:
             return
-    
+
         menu = QMenu(self)
-    
+
         ai_menu = menu.addMenu("🤖 AI Actions")
         send_all_action = ai_menu.addAction("Send Entire File to Ollama")
         send_selection_action = ai_menu.addAction("Send Selection to Ollama")
-    
+
         menu.addSeparator()
-    
+
         copy_path_action = menu.addAction("📋 Copy File Path")
         copy_relative_path_action = menu.addAction("📋 Copy Relative Path")
 
@@ -464,6 +507,10 @@ class WorkspaceIDE(QMainWindow):
     def on_editor_tab_changed(self, index):
         """Handle tab change"""
         if index >= 0:
+
+            # Track tab access
+            self.tab_order_manager.record_access(index)
+
             editor = self.tabs.widget(index)
             if isinstance(editor, CodeEditor):
                 self.find_replace.set_editor(editor)
@@ -607,7 +654,7 @@ class WorkspaceIDE(QMainWindow):
         current_widget = self.tabs.currentWidget()
         if isinstance(current_widget, CodeEditor):
             current_widget.duplicate_line_or_selection()
-    
+
 
 
     # =====================================================================
@@ -850,24 +897,24 @@ class WorkspaceIDE(QMainWindow):
             # )
         """Show settings dialog and apply changes immediately"""
         from PyQt6.QtWidgets import QDialog, QMessageBox
-        
+
         dialog = SettingsDialog(self)
         dialog.set_settings(self.settings_manager.settings)
-        
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
             # Get new settings
             new_settings = dialog.get_settings()
-            
+
             # Check what changed
             old_settings = self.settings_manager.settings.copy()
-            
+
             # Update settings
             self.settings_manager.update(new_settings)
             self.settings_manager.save()
-            
+
             # Apply settings immediately (no restart needed)
             self.apply_settings_live(old_settings, new_settings)
-            
+
             QMessageBox.information(
                 self,
                 "Settings Applied",
@@ -899,35 +946,35 @@ class WorkspaceIDE(QMainWindow):
     def apply_settings_live(self, old_settings, new_settings):
         """
         Apply settings changes to all open editors immediately
-        
+
         Args:
             old_settings: Previous settings dict
             new_settings: New settings dict
         """
         from ide.core.CodeEditor import CodeEditor
-        
+
         # Check what changed
         font_changed = old_settings.get('editor_font_size') != new_settings.get('editor_font_size')
         tab_changed = old_settings.get('tab_width') != new_settings.get('tab_width')
         line_numbers_changed = old_settings.get('show_line_numbers') != new_settings.get('show_line_numbers')
         gutter_changed = old_settings.get('gutter_width') != new_settings.get('gutter_width')
-        
+
         # Apply to all open editors
         for i in range(self.tabs.count()):
             editor = self.tabs.widget(i)
             if isinstance(editor, CodeEditor):
                 if font_changed:
                     editor.set_font_size(new_settings.get('editor_font_size', 11))
-                
+
                 if tab_changed:
                     editor.set_tab_width(new_settings.get('tab_width', 4))
-                
+
                 if line_numbers_changed:
                     editor.set_show_line_numbers(new_settings.get('show_line_numbers', True))
-                
+
                 if gutter_changed:
                     editor.set_gutter_width(new_settings.get('gutter_width', 10))
-        
+
         # Update status bar if needed
         if font_changed or tab_changed or line_numbers_changed or gutter_changed:
             self.statusbar_manager.update_file_info(self.tabs.currentWidget())
@@ -1008,6 +1055,11 @@ class WorkspaceIDE(QMainWindow):
 <table style="width: 100%">
 <tr><td><b>Ctrl+G</b></td><td>Go to Line</td></tr>
 <tr><td><b>Ctrl+P</b></td><td>Go to File</td></tr>
+<tr><td><b>Ctrl+Tab</b></td><td>Tab Switcher (Recent Order)</td></tr>
+<tr><td><b>Ctrl+Shift+Tab</b></td><td>Tab Switcher (Reverse)</td></tr>
+<tr><td><b>↑↓ in Switcher</b></td><td>Navigate Tabs</td></tr>
+<tr><td><b>Enter in Switcher</b></td><td>Select Tab</td></tr>
+<tr><td><b>Esc in Switcher</b></td><td>Cancel</td></tr>
 </table>
 
 <h4>Run</h4>
@@ -1079,16 +1131,16 @@ class WorkspaceIDE(QMainWindow):
     def copy_file_path_to_clipboard(self, file_path, relative=False):
         """
         Copy file path to clipboard
-        
+
         Args:
             file_path: Absolute path to the file
             relative: If True, copy path relative to workspace
         """
         from PyQt6.QtWidgets import QApplication
         from pathlib import Path
-        
+
         path = Path(file_path)
-        
+
         if relative:
             try:
                 # Get path relative to workspace
@@ -1102,14 +1154,46 @@ class WorkspaceIDE(QMainWindow):
         else:
             path_to_copy = str(path)
             path_type = "File path"
-        
+
         # Copy to clipboard
         clipboard = QApplication.clipboard()
         clipboard.setText(path_to_copy)
-        
+
         # Show confirmation in status bar
         self.status_message.setText(f"{path_type} copied: {path_to_copy}")
         QTimer.singleShot(3000, lambda: self.status_message.setText(""))
+
+    def show_tab_switcher(self):
+        """Show the tab switcher dialog"""
+        from ide.core.TabSwitcher import TabSwitcherDialog
+
+        # print(f"[DEBUG] show_tab_switcher called")
+        # print(f"[DEBUG] Tab count: {self.tabs.count()}")
+
+        #if self.tabs.count() < 2:
+            # No point showing switcher with 0 or 1 tabs
+            # print(f"[DEBUG] Not enough tabs, returning")
+            #return
+
+        # Get recent order
+        current_index = self.tabs.currentIndex()
+        recent_order = self.tab_order_manager.get_recent_order(current_index)
+
+        # print(f"[DEBUG] Current index: {current_index}")
+        # print(f"[DEBUG] Recent order: {recent_order}")
+
+        # Show switcher dialog
+        dialog = TabSwitcherDialog(self, self.tabs, recent_order)
+
+        # print(f"[DEBUG] Dialog created, showing...")
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if dialog.selected_tab is not None:
+                # print(f"[DEBUG] Switching to tab: {dialog.selected_tab}")
+                self.tabs.setCurrentIndex(dialog.selected_tab)
+                self.tab_order_manager.record_access(dialog.selected_tab)
+        #else:
+            # print(f"[DEBUG] Dialog rejected/cancelled")
 
     # =====================================================================
     # Application Lifecycle
