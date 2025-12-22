@@ -182,14 +182,15 @@ class TabManager:
             QMessageBox.warning(self.parent, "No Text", "No text to send.")
             return
     
-        # Show context preview dialog
+        # Show context preview dialog - PASS ollama_widget
         from ide.core.OllamaContextDialog import OllamaContextDialog
         
         dialog = OllamaContextDialog(
             self.parent,
             context,
             context_builder,
-            text_type
+            text_type,
+            self.parent.ollama_widget  # ADD THIS - pass the Ollama widget
         )
         
         if dialog.exec() == QMessageBox.DialogCode.Accepted:
@@ -213,10 +214,95 @@ class TabManager:
             
             full_message = f"{user_prompt}\n\n{context_text}"
             
+            # Model selection is already synced in dialog.accept()
             self.parent.ollama_widget.send_text_message(full_message)
             self.parent.show_ollama_panel()
             self.parent.status_message.setText(f"Sent {len(text_to_send)} characters with context to Ollama")
             QTimer.singleShot(3000, lambda: self.parent.status_message.setText(""))
+    
+
+
+    # def send_tab_to_ollama(self, tab_index, send_all=False):
+        # """Send tab content to Ollama with smart context"""
+        # from ide.core.OllamaContext import OllamaContextBuilder
+        
+        # editor = self.tabs.widget(tab_index)
+        # if not isinstance(editor, CodeEditor):
+            # return
+    
+        # # Get context level from settings
+        # context_level = 'smart'
+        # if hasattr(self.parent, 'settings_manager'):
+            # context_level = self.parent.settings_manager.get('ollama_context_level', 'smart')
+        
+        # # Build context
+        # context_builder = OllamaContextBuilder()
+        # context = context_builder.build_context(editor, level=context_level)
+        
+        # # Get text to send
+        # if send_all:
+            # text_to_send = editor.toPlainText()
+            # text_type = "entire file"
+            # # For full file, update context
+            # context['selection'] = {
+                # 'start_line': 1,
+                # 'end_line': editor.blockCount(),
+                # 'line_count': editor.blockCount(),
+                # 'char_count': len(text_to_send),
+                # 'text': text_to_send
+            # }
+        # else:
+            # cursor = editor.textCursor()
+            # if cursor.hasSelection():
+                # text_to_send = cursor.selectedText().replace('\u2029', '\n')
+                # text_type = "selected text"
+            # else:
+                # QMessageBox.warning(
+                    # self.parent,
+                    # "No Selection",
+                    # "Please select some text first, or use 'Send Entire File to Ollama'."
+                # )
+                # return
+    
+        # if not text_to_send.strip():
+            # QMessageBox.warning(self.parent, "No Text", "No text to send.")
+            # return
+    
+        # # Show context preview dialog
+        # from ide.core.OllamaContextDialog import OllamaContextDialog
+        
+        # dialog = OllamaContextDialog(
+            # self.parent,
+            # context,
+            # context_builder,
+            # text_type
+        # )
+        
+        # if dialog.exec() == QMessageBox.DialogCode.Accepted:
+            # # User confirmed, send with selected context level
+            # final_context_level = dialog.get_context_level()
+            
+            # # Rebuild context with final level
+            # context = context_builder.build_context(editor, level=final_context_level)
+            # if send_all:
+                # context['selection'] = {
+                    # 'start_line': 1,
+                    # 'end_line': editor.blockCount(),
+                    # 'line_count': editor.blockCount(),
+                    # 'char_count': len(text_to_send),
+                    # 'text': text_to_send
+                # }
+            
+            # # Format full message
+            # context_text = context_builder.format_context(context, include_code=True)
+            # user_prompt = dialog.get_prompt()
+            
+            # full_message = f"{user_prompt}\n\n{context_text}"
+            
+            # self.parent.ollama_widget.send_text_message(full_message)
+            # self.parent.show_ollama_panel()
+            # self.parent.status_message.setText(f"Sent {len(text_to_send)} characters with context to Ollama")
+            # QTimer.singleShot(3000, lambda: self.parent.status_message.setText(""))
 
 
     # def send_tab_to_ollama(self, tab_index, send_all=False):

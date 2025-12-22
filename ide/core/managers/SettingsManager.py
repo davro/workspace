@@ -21,8 +21,11 @@ class SettingsManager:
         'ollama_timeout': 180,
         'active_projects': [],
         'recent_files': [],
-        'gutter_width': 10,				# CodeEditor gutter width
-		'tab_switcher_mru': True		# Enable MRU tab navigation
+        'gutter_width': 10,					# CodeEditor gutter width
+		'tab_switcher_mru': True,			# Enable MRU tab navigation
+
+        'ollama_context_level': 'smart',	# Options: 'minimal', 'basic', 'smart'
+        'ollama_show_context_dialog': True	# Show preview dialog before sending
     }
 
     def __init__(self, config_file):
