@@ -1,4 +1,21 @@
 """
+Smart Context for Ollama Integration
+
+Automatically adds intelligent context when sending code to Ollama:
+- File path and language detection
+- Line numbers for selections
+- Function/class context (AST parsing for Python)
+- Import analysis
+- Surrounding code context
+- Context preview before sending
+- Settings to customize context level
+"""
+
+# ============================================================================
+# STEP 1: Create OllamaContext.py in ide/core/
+# ============================================================================
+
+"""
 Create new file: ide/core/OllamaContext.py
 This builds intelligent context from code editors
 """
@@ -281,4 +298,3 @@ class OllamaContextBuilder:
             lines.append("```")
         
         return '\n'.join(lines)
-
