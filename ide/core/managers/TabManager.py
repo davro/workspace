@@ -135,15 +135,36 @@ class TabManager:
 
         return saved_count
 
+
     def send_tab_to_ollama(self, tab_index, send_all=False):
-        """Send tab content to Ollama"""
+        """Send tab content to Ollama with smart context"""
+        from ide.core.OllamaContext import OllamaContextBuilder
+        
         editor = self.tabs.widget(tab_index)
         if not isinstance(editor, CodeEditor):
             return
-
+    
+        # Get context level from settings
+        context_level = 'smart'
+        if hasattr(self.parent, 'settings_manager'):
+            context_level = self.parent.settings_manager.get('ollama_context_level', 'smart')
+        
+        # Build context
+        context_builder = OllamaContextBuilder()
+        context = context_builder.build_context(editor, level=context_level)
+        
+        # Get text to send
         if send_all:
             text_to_send = editor.toPlainText()
             text_type = "entire file"
+            # For full file, update context
+            context['selection'] = {
+                'start_line': 1,
+                'end_line': editor.blockCount(),
+                'line_count': editor.blockCount(),
+                'char_count': len(text_to_send),
+                'text': text_to_send
+            }
         else:
             cursor = editor.textCursor()
             if cursor.hasSelection():
@@ -156,25 +177,88 @@ class TabManager:
                     "Please select some text first, or use 'Send Entire File to Ollama'."
                 )
                 return
-
+    
         if not text_to_send.strip():
             QMessageBox.warning(self.parent, "No Text", "No text to send.")
             return
-
-        prompt, ok = QInputDialog.getText(
+    
+        # Show context preview dialog
+        from ide.core.OllamaContextDialog import OllamaContextDialog
+        
+        dialog = OllamaContextDialog(
             self.parent,
-            "Send to Ollama",
-            f"Enter your instruction for Ollama:\n(Sending {text_type}, {len(text_to_send)} characters)",
-            QLineEdit.EchoMode.Normal,
-            "Explain this code:"
+            context,
+            context_builder,
+            text_type
         )
-
-        if ok and prompt.strip():
-            full_message = f"{prompt}\n\n```\n{text_to_send}\n```"
+        
+        if dialog.exec() == QMessageBox.DialogCode.Accepted:
+            # User confirmed, send with selected context level
+            final_context_level = dialog.get_context_level()
+            
+            # Rebuild context with final level
+            context = context_builder.build_context(editor, level=final_context_level)
+            if send_all:
+                context['selection'] = {
+                    'start_line': 1,
+                    'end_line': editor.blockCount(),
+                    'line_count': editor.blockCount(),
+                    'char_count': len(text_to_send),
+                    'text': text_to_send
+                }
+            
+            # Format full message
+            context_text = context_builder.format_context(context, include_code=True)
+            user_prompt = dialog.get_prompt()
+            
+            full_message = f"{user_prompt}\n\n{context_text}"
+            
             self.parent.ollama_widget.send_text_message(full_message)
             self.parent.show_ollama_panel()
-            self.parent.status_message.setText(f"Sent {len(text_to_send)} characters to Ollama")
+            self.parent.status_message.setText(f"Sent {len(text_to_send)} characters with context to Ollama")
             QTimer.singleShot(3000, lambda: self.parent.status_message.setText(""))
+
+
+    # def send_tab_to_ollama(self, tab_index, send_all=False):
+        # """Send tab content to Ollama"""
+        # editor = self.tabs.widget(tab_index)
+        # if not isinstance(editor, CodeEditor):
+            # return
+
+        # if send_all:
+            # text_to_send = editor.toPlainText()
+            # text_type = "entire file"
+        # else:
+            # cursor = editor.textCursor()
+            # if cursor.hasSelection():
+                # text_to_send = cursor.selectedText().replace('\u2029', '\n')
+                # text_type = "selected text"
+            # else:
+                # QMessageBox.warning(
+                    # self.parent,
+                    # "No Selection",
+                    # "Please select some text first, or use 'Send Entire File to Ollama'."
+                # )
+                # return
+
+        # if not text_to_send.strip():
+            # QMessageBox.warning(self.parent, "No Text", "No text to send.")
+            # return
+
+        # prompt, ok = QInputDialog.getText(
+            # self.parent,
+            # "Send to Ollama",
+            # f"Enter your instruction for Ollama:\n(Sending {text_type}, {len(text_to_send)} characters)",
+            # QLineEdit.EchoMode.Normal,
+            # "Explain this code:"
+        # )
+
+        # if ok and prompt.strip():
+            # full_message = f"{prompt}\n\n```\n{text_to_send}\n```"
+            # self.parent.ollama_widget.send_text_message(full_message)
+            # self.parent.show_ollama_panel()
+            # self.parent.status_message.setText(f"Sent {len(text_to_send)} characters to Ollama")
+            # QTimer.singleShot(3000, lambda: self.parent.status_message.setText(""))
 
     def get_current_editor(self):
         """Get the currently active editor"""

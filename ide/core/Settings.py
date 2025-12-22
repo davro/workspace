@@ -73,6 +73,27 @@ class SettingsDialog(QDialog):
         self.ollama_timeout.setSuffix(" seconds")
         form.addRow("Ollama Request Timeout:", self.ollama_timeout)
 
+        # Ollama Context Level
+        context_label = QLabel("Ollama Context Level:")
+        self.context_level_combo = QComboBox()
+        self.context_level_combo.addItem("Minimal (file + language)", "minimal")
+        self.context_level_combo.addItem("Basic (+ line numbers)", "basic")
+        self.context_level_combo.addItem("Smart (+ function/class)", "smart")
+        self.context_level_combo.setCurrentIndex(2)
+        self.context_level_combo.setToolTip(
+            "How much context to include when sending code to Ollama"
+        )
+        form.addRow(context_label, self.context_level_combo)
+        
+        # Show context dialog
+        self.show_context_dialog = QCheckBox()
+        self.show_context_dialog.setChecked(True)
+        self.show_context_dialog.setToolTip(
+            "Show preview dialog before sending to Ollama"
+        )
+        form.addRow("Preview Context Before Send:", self.show_context_dialog)
+
+
         # Tab Switcher 
         self.tab_switcher_mru = QCheckBox()
         self.tab_switcher_mru.setChecked(True)
@@ -103,6 +124,10 @@ class SettingsDialog(QDialog):
             'gutter_width': self.gutter_spin.value(),
             'auto_save': self.auto_save.isChecked(),
             'ollama_timeout': self.ollama_timeout.value(),
+
+            'ollama_context_level': self.context_level_combo.currentData(),
+            'ollama_show_context_dialog': self.show_context_dialog.isChecked(),
+
             'tab_switcher_mru': self.tab_switcher_mru.isChecked(),
         }
 
@@ -116,5 +141,17 @@ class SettingsDialog(QDialog):
         self.show_line_numbers.setChecked(settings.get('show_line_numbers', True))
         self.auto_save.setChecked(settings.get('auto_save', False))
         self.ollama_timeout.setValue(settings.get('ollama_timeout', 180))
+
+        # Set context level
+        context_level = settings.get('ollama_context_level', 'smart')
+        for i in range(self.context_level_combo.count()):
+            if self.context_level_combo.itemData(i) == context_level:
+                self.context_level_combo.setCurrentIndex(i)
+                break
+        
+        self.show_context_dialog.setChecked(
+            settings.get('ollama_show_context_dialog', True)
+        )
+
         self.tab_switcher_mru.setChecked(settings.get('tab_switcher_mru', True))
 

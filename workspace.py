@@ -223,7 +223,7 @@ class WorkspaceIDE(QMainWindow):
         ollama_layout.setContentsMargins(5, 5, 5, 5)
         ollama_layout.setSpacing(5)
 
-        ollama_header = QLabel("🤖 AI Chat")
+        ollama_header = QLabel("🤖 AI (Local)")
         ollama_header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
         ollama_layout.addWidget(ollama_header)
         ollama_layout.addWidget(self.ollama_widget)
