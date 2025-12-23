@@ -36,7 +36,7 @@ from ide.core.managers.StatusBarManager import StatusBarManager
 from ide.core.managers.SettingsManager import SettingsManager
 from ide.core.managers.MenuManager import MenuManager
 from ide.core.managers.RecentFilesManager import RecentFilesManager
-
+from ide.core.DragDropTreeView import DragDropTreeView
 
 class WorkspaceIDE(QMainWindow):
     """
@@ -148,47 +148,86 @@ class WorkspaceIDE(QMainWindow):
         self.ollama_panel_visible = False
         self.main_splitter.widget(2).hide()
 
+
+    """
+    Replace QTreeView with DragDropTreeView
+    """
+    
     def _create_left_sidebar(self):
         """Create left sidebar with file explorer and projects"""
         left_tabs = QTabWidget()
         left_tabs.setMaximumWidth(450)
-
+    
         # File Explorer
         explorer_widget = QWidget()
         explorer_layout = QVBoxLayout(explorer_widget)
         explorer_layout.setContentsMargins(5, 5, 5, 5)
-
+    
         explorer_label = QLabel("File Explorer")
         explorer_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         explorer_layout.addWidget(explorer_label)
-
+    
         self.file_model = QFileSystemModel()
         self.file_model.setRootPath(str(self.workspace_path))
-
-        self.tree = QTreeView()
+    
+        # REPLACE QTreeView with DragDropTreeView
+        from ide.core.DragDropTreeView import DragDropTreeView
+        self.tree = DragDropTreeView()  # Changed from QTreeView()
         self.tree.setModel(self.file_model)
         self.tree.setRootIndex(self.file_model.index(str(self.workspace_path)))
-
+    
         self.tree_delegate = ProjectHighlightDelegate(self.tree)
         self.tree.setItemDelegate(self.tree_delegate)
-
+    
         self.tree.setColumnWidth(0, 450)
         for i in range(1, 4):
             self.tree.setColumnHidden(i, True)
-
+    
         self.tree.doubleClicked.connect(self.open_file)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_explorer_context_menu)
-
+    
         explorer_layout.addWidget(self.tree)
         left_tabs.addTab(explorer_widget, "📁 Files")
-
+    
         # Projects Panel
         self.projects_panel = ProjectsPanel(self.workspace_path, self)
         self.projects_panel.projects_changed.connect(self.update_tree_highlighting)
         left_tabs.addTab(self.projects_panel, "📦 Projects")
-
+    
         self.main_splitter.addWidget(left_tabs)
+
+
+    """
+    Optional: Update TabManager to handle file moves
+    Add this to workspace.py or TabManager.py
+    """
+    
+    def handle_file_moved(self, old_path: str, new_path: str):
+        """
+        Handle when a file is moved - update open tabs
+        
+        Args:
+            old_path: Original file path
+            new_path: New file path
+        """
+        from ide.core.CodeEditor import CodeEditor
+        
+        # Find any open tabs with the old path
+        for i in range(self.tabs.count()):
+            editor = self.tabs.widget(i)
+            if isinstance(editor, CodeEditor) and editor.file_path == old_path:
+                # Update the file path
+                editor.file_path = new_path
+                
+                # Update tab title
+                new_name = Path(new_path).name
+                self.tabs.setTabText(i, new_name)
+                self.tabs.setTabToolTip(i, new_path)
+                
+                # Show notification
+                self.status_message.setText(f"Updated tab: {new_name}")
+
 
     def _create_editor_area(self):
         """Create center editor area"""
@@ -229,25 +268,6 @@ class WorkspaceIDE(QMainWindow):
         ollama_layout.addWidget(self.ollama_widget)
 
         self.main_splitter.addWidget(ollama_container)
-
-    # def _setup_shortcuts(self):
-        # """Setup keyboard shortcuts"""
-        # shortcuts = [
-            # ("Ctrl+Shift+O", self.send_to_ollama),
-            # ("F3", self.find_next),
-            # ("Shift+F3", self.find_previous),
-
-            # #("Ctrl+Shift+C", self.copy_current_file_path),
-            # # REMOVE old Ctrl+Tab if it exists
-            # # ADD THIS: Tab switcher shortcuts
-            # ("Ctrl+Tab", self.show_tab_switcher),
-            # ("Ctrl+Shift+Tab", self.show_tab_switcher),  # Same handler, dialog handles direction
-        # ]
-
-        # for key, callback in shortcuts:
-            # shortcut = QShortcut(QKeySequence(key), self)
-            # shortcut.activated.connect(callback)
-
 
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts"""

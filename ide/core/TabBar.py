@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QTabBar, QTabWidget
 from PyQt6.QtGui import QPainter, QColor
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QEvent
 
 
 class StyledTabBar(QTabBar):
@@ -54,6 +54,21 @@ class StyledTabBar(QTabBar):
                 background-color: #E74C3C;
             }
         """)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press events - close tab on middle click"""
+        if event.button() == Qt.MouseButton.MiddleButton:
+            # Get the tab index at the click position
+            tab_index = self.tabAt(event.pos())
+            
+            if tab_index >= 0:
+                # Emit the tabCloseRequested signal
+                self.tabCloseRequested.emit(tab_index)
+                event.accept()
+                return
+        
+        # Let the default handler process other mouse buttons
+        super().mousePressEvent(event)
 
     def set_tab_modified(self, index, modified):
         """Mark a tab as modified or unmodified"""
@@ -146,6 +161,3 @@ class StyledTabWidget(QTabWidget):
     def set_tab_modified(self, index, modified):
         """Mark a tab as modified"""
         self.custom_tab_bar.set_tab_modified(index, modified)
-
-
-
