@@ -24,7 +24,7 @@ from ide.core.Settings import SettingsDialog
 from ide.core.Ollama import OllamaChatWidget
 from ide.core.Document import DocumentDialog
 from ide.core.TabBar import StyledTabWidget
-from ide.core.ProjectsPanel import ProjectsPanel, ProjectHighlightDelegate
+from ide.core.ProjectsPanel import ProjectsPanel
 from ide.core.PluginManagerUI import PluginManagerUI
 from ide.core.CodeEditor import CodeEditor
 
@@ -150,7 +150,7 @@ class WorkspaceIDE(QMainWindow):
 
 
     """
-    Replace QTreeView with DragDropTreeView
+    Replace your _create_left_sidebar with this updated version:
     """
     
     def _create_left_sidebar(self):
@@ -170,13 +170,15 @@ class WorkspaceIDE(QMainWindow):
         self.file_model = QFileSystemModel()
         self.file_model.setRootPath(str(self.workspace_path))
     
-        # REPLACE QTreeView with DragDropTreeView
+        # Create tree view
         from ide.core.DragDropTreeView import DragDropTreeView
-        self.tree = DragDropTreeView()  # Changed from QTreeView()
+        self.tree = DragDropTreeView()
         self.tree.setModel(self.file_model)
         self.tree.setRootIndex(self.file_model.index(str(self.workspace_path)))
     
-        self.tree_delegate = ProjectHighlightDelegate(self.tree)
+        # Use combined delegate (replaces both FileIconDelegate and ProjectHighlightDelegate)
+        from ide.core.CombinedTreeDelegate import CombinedTreeDelegate
+        self.tree_delegate = CombinedTreeDelegate(self.file_model, self.tree)
         self.tree.setItemDelegate(self.tree_delegate)
     
         self.tree.setColumnWidth(0, 450)
@@ -196,8 +198,8 @@ class WorkspaceIDE(QMainWindow):
         left_tabs.addTab(self.projects_panel, "📦 Projects")
     
         self.main_splitter.addWidget(left_tabs)
-
-
+	
+	
     """
     Optional: Update TabManager to handle file moves
     Add this to workspace.py or TabManager.py

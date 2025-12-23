@@ -16,45 +16,44 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from ide import WORKSPACE_PATH
 
 
+# class ProjectHighlightDelegate(QStyledItemDelegate):
+    # """Custom delegate to highlight active projects in tree view"""
 
-class ProjectHighlightDelegate(QStyledItemDelegate):
-    """Custom delegate to highlight active projects in tree view"""
+    # def __init__(self, parent=None):
+        # super().__init__(parent)
+        # self.active_projects = set()
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.active_projects = set()
+    # def set_active_projects(self, projects):
+        # """Update list of active projects"""
+        # self.active_projects = set(str(Path(p).name) for p in projects)
 
-    def set_active_projects(self, projects):
-        """Update list of active projects"""
-        self.active_projects = set(str(Path(p).name) for p in projects)
+    # def paint(self, painter, option, index):
+        # """Custom paint to highlight active projects"""
+        # model = index.model()
+        # file_path = model.filePath(index)
+        # path = Path(file_path)
 
-    def paint(self, painter, option, index):
-        """Custom paint to highlight active projects"""
-        model = index.model()
-        file_path = model.filePath(index)
-        path = Path(file_path)
+        # parent_path = path.parent
+        # workspace_path = Path.home() / WORKSPACE_PATH
 
-        parent_path = path.parent
-        workspace_path = Path.home() / WORKSPACE_PATH
+        # is_project = (parent_path == workspace_path and
+                     # path.is_dir() and
+                     # path.name in self.active_projects)
 
-        is_project = (parent_path == workspace_path and
-                     path.is_dir() and
-                     path.name in self.active_projects)
-
-        if is_project:
-            painter.save()
-            bg_color = QColor("#2D5A2D")
-            painter.fillRect(option.rect, bg_color)
-            painter.setPen(QColor("#7FFF7F"))
-            text = index.data(Qt.ItemDataRole.DisplayRole)
-            font = option.font
-            font.setBold(True)
-            painter.setFont(font)
-            text_rect = option.rect.adjusted(5, 0, 0, 0)
-            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter, text)
-            painter.restore()
-        else:
-            super().paint(painter, option, index)
+        # if is_project:
+            # painter.save()
+            # bg_color = QColor("#2D5A2D")
+            # painter.fillRect(option.rect, bg_color)
+            # painter.setPen(QColor("#7FFF7F"))
+            # text = index.data(Qt.ItemDataRole.DisplayRole)
+            # font = option.font
+            # font.setBold(True)
+            # painter.setFont(font)
+            # text_rect = option.rect.adjusted(5, 0, 0, 0)
+            # painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter, text)
+            # painter.restore()
+        # else:
+            # super().paint(painter, option, index)
 
 
 # ---------------------- Projects Panel ----------------------
