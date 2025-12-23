@@ -9,6 +9,7 @@ Features:
 - Handles edge cases (can't move into self, etc.)
 - Updates tree view automatically
 - Undo support (optional)
+- Enter key to open files
 """
 
 # ============================================================================
@@ -20,8 +21,8 @@ Custom QTreeView with drag and drop support
 """
 
 from PyQt6.QtWidgets import QTreeView, QMessageBox
-from PyQt6.QtCore import Qt, QModelIndex
-from PyQt6.QtGui import QDragMoveEvent, QDropEvent
+from PyQt6.QtCore import Qt, QModelIndex, pyqtSignal
+from PyQt6.QtGui import QDragMoveEvent, QDropEvent, QKeyEvent
 from pathlib import Path
 import shutil
 
@@ -35,7 +36,11 @@ class DragDropTreeView(QTreeView):
     - Visual feedback during drag
     - Validation before drop
     - Auto-refresh after move
+    - Enter key to open files
     """
+    
+    # Signal emitted when Enter is pressed on a file
+    fileActivated = pyqtSignal(QModelIndex)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -48,6 +53,55 @@ class DragDropTreeView(QTreeView):
         
         # Track what's being dragged
         self.dragged_path = None
+    
+    def keyPressEvent(self, event: QKeyEvent):
+        """Handle key press events - open files on Enter/Return"""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # Get currently selected index(es)
+            selected_indexes = self.selectedIndexes()
+            
+            if not selected_indexes:
+                super().keyPressEvent(event)
+                return
+            
+            # Filter to only column 0 (file name column) to avoid duplicates
+            selected_indexes = [idx for idx in selected_indexes if idx.column() == 0]
+            
+            model = self.model()
+            opened_files = []
+            
+            for index in selected_indexes:
+                if index.isValid():
+                    file_path = Path(model.filePath(index))
+                    
+                    # Only open files, not directories
+                    if file_path.is_file():
+                        # Emit signal or trigger double-click behavior
+                        self.doubleClicked.emit(index)
+                        opened_files.append(file_path.name)
+                    elif file_path.is_dir():
+                        # For directories, toggle expansion
+                        if self.isExpanded(index):
+                            self.collapse(index)
+                        else:
+                            self.expand(index)
+            
+            # Show status message if files were opened
+            if opened_files and hasattr(self.window(), 'status_message'):
+                if len(opened_files) == 1:
+                    msg = f"Opened: {opened_files[0]}"
+                else:
+                    msg = f"Opened {len(opened_files)} files"
+                
+                self.window().status_message.setText(msg)
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(3000, lambda: self.window().status_message.setText(""))
+            
+            event.accept()
+            return
+        
+        # Let parent handle other keys
+        super().keyPressEvent(event)
     
     def startDrag(self, supportedActions):
         """Start drag operation"""

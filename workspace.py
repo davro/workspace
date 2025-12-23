@@ -760,12 +760,13 @@ class WorkspaceIDE(QMainWindow):
 
         # Determine command based on file type
         command_map = {
-            '.py': f'python3 "{file_path}"',
-            '.php': f'php "{file_path}"',
-            '.js': f'node "{file_path}"',
-            '.cjs': f'node "{file_path}"',
-            '.mjs': f'node "{file_path}"',
-            '.sh': f'bash "{file_path}"'
+            '.py'  : f'python3 "{file_path}"',
+            '.php' : f'php "{file_path}"',
+            '.js'  : f'node "{file_path}"',
+            '.cjs' : f'node "{file_path}"',
+            '.mjs' : f'node "{file_path}"',
+            '.sh'  : f'bash "{file_path}"',
+            '.bash': f'bash "{file_path}"'
         }
 
         if file_path.suffix in {'.html', '.htm'}:
