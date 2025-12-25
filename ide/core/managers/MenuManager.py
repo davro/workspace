@@ -84,6 +84,31 @@ class MenuManager:
 
         return menu
 
+
+    def create_view_menu(self):
+        """Create View menu with split view options"""
+        #print ("VIEW MENU")
+        menu = self.menubar.addMenu("View")
+        self.menus['view'] = menu
+    
+        # Split view submenu
+        split_menu = menu.addMenu("Split Editor")
+        self._add_action(split_menu, "Split Vertical", "Ctrl+\\", self.parent.split_editor_vertical)
+        self._add_action(split_menu, "Split Horizontal", "Ctrl+Shift+\\", self.parent.split_editor_horizontal)
+        split_menu.addSeparator()
+        self._add_action(split_menu, "Move Tab to Other Group", "Ctrl+Alt+M", self.parent.move_tab_to_split)
+        self._add_action(split_menu, "Focus Other Group", "Ctrl+Alt+O", self.parent.focus_other_split)
+        self._add_action(split_menu, "Open in Split", "Ctrl+Alt+S", self.parent.open_in_split)
+        split_menu.addSeparator()
+        self._add_action(split_menu, "Close Split", "Ctrl+Alt+W", self.parent.close_editor_split)
+        
+        menu.addSeparator()
+        self._add_action(menu, "Toggle Explorer", "Ctrl+B", self.parent.toggle_explorer)
+        self._add_action(menu, "Toggle AI Chat", "Ctrl+L", self.parent.toggle_ollama_panel)
+    
+        return menu
+
+
     def _refresh_recent_files_menu(self, recent_files_manager):
         """Refresh the recent files menu with current files"""
         # Clear existing menu
@@ -155,15 +180,15 @@ class MenuManager:
 
         return menu
 
-    def create_view_menu(self):
-        """Create View menu"""
-        menu = self.menubar.addMenu("View")
-        self.menus['view'] = menu
+    # def create_view_menu(self):
+        # """Create View menu"""
+        # menu = self.menubar.addMenu("View")
+        # self.menus['view'] = menu
 
-        self._add_action(menu, "Toggle Explorer", "Ctrl+B", self.parent.toggle_explorer)
-        self._add_action(menu, "Toggle AI Chat", "Ctrl+L", self.parent.toggle_ollama_panel)
+        # self._add_action(menu, "Toggle Explorer", "Ctrl+B", self.parent.toggle_explorer)
+        # self._add_action(menu, "Toggle AI Chat", "Ctrl+L", self.parent.toggle_ollama_panel)
 
-        return menu
+        # return menu
 
     def create_go_menu(self):
         """Create Go menu"""

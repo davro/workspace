@@ -1,4 +1,4 @@
-# ============================================================================
+ # ============================================================================
 # workspace_ide.py (Refactored Main Class)
 # ============================================================================
 
@@ -66,6 +66,10 @@ class WorkspaceIDE(QMainWindow):
 
         # Initialize managers
         self.settings_manager = SettingsManager(self.config_file)
+
+        # ADD THIS - Initialize split manager
+        from ide.core.managers.SplitEditorManager import SplitEditorManager
+        self.split_manager = SplitEditorManager(self)
 
         # Build UI first
         self.init_ui()
@@ -198,6 +202,7 @@ class WorkspaceIDE(QMainWindow):
         left_tabs.addTab(self.projects_panel, "📦 Projects")
     
         self.main_splitter.addWidget(left_tabs)
+
 	
 	
     """
@@ -237,22 +242,27 @@ class WorkspaceIDE(QMainWindow):
         editor_layout = QVBoxLayout(editor_container)
         editor_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.setSpacing(0)
-
+    
         # Find/Replace widget
         self.find_replace = FindReplaceWidget()
         editor_layout.addWidget(self.find_replace)
-
-        # Tab widget for editors
-        self.tabs = StyledTabWidget()
+    
+        # Initialize split editor manager
+        # This creates the initial editor group and returns its tab widget
+        self.tabs = self.split_manager.initialize(editor_layout)
+    
+        # Setup tab event handlers
+        # These are still needed for the primary group
         self.tabs.setTabsClosable(True)
         self.tabs.setMovable(True)
         self.tabs.tabCloseRequested.connect(lambda idx: self.tab_manager.close_tab(idx))
         self.tabs.currentChanged.connect(self.on_editor_tab_changed)
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
-
-        editor_layout.addWidget(self.tabs)
+    
         self.main_splitter.addWidget(editor_container)
+
+
 
     def _create_right_sidebar(self):
         """Create right sidebar with Ollama chat"""
@@ -286,6 +296,44 @@ class WorkspaceIDE(QMainWindow):
         for key, callback in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(callback)
+
+    def split_editor_vertical(self):
+        self.split_manager.split_vertical()
+    
+    def split_editor_horizontal(self):
+        self.split_manager.split_horizontal()
+    
+    def close_editor_split(self):
+        self.split_manager.close_split()
+    
+    def move_tab_to_split(self):
+        self.split_manager.move_tab_to_other_group()
+    
+    def focus_other_split(self):
+        self.split_manager.focus_other_group()
+    
+    # def open_in_split(self):
+        # '''Open current file in split view'''
+        # current_editor = self.tabs.currentWidget()
+        # if isinstance(current_editor, CodeEditor) and current_editor.file_path:
+            # self.split_manager.open_file_in_split(current_editor.file_path)
+
+    def open_in_split(self):
+        """Open current file in split view"""
+        # Get the active group's current editor
+        active_group = self.split_manager.get_active_group()
+        current_editor = active_group.get_current_editor()
+        
+        if isinstance(current_editor, CodeEditor) and current_editor.file_path:
+            self.split_manager.open_file_in_split(current_editor.file_path)
+        else:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "No File",
+                "No file is currently open to split."
+            )
+
 
     # Add this new method:
     def cycle_tabs_backward(self):
@@ -342,9 +390,13 @@ class WorkspaceIDE(QMainWindow):
         """Handler for creating new folder"""
         self.file_manager.create_new_folder(self.workspace_path)
 
+    # =====================================================================
+    # File Operations
+    # =====================================================================
+    
     def save_current_file(self):
         """Save current file"""
-        current_widget = self.tabs.currentWidget()
+        current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             if current_widget.save_file():
                 current_widget.document().setModified(False)
@@ -352,9 +404,39 @@ class WorkspaceIDE(QMainWindow):
                 self.status_message.setText("File saved")
                 QTimer.singleShot(2000, lambda: self.status_message.setText(""))
 
+    # def save_current_file(self):
+        # """Save current file"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # if current_widget.save_file():
+                # current_widget.document().setModified(False)
+                # self.on_editor_modified(current_widget)
+                # self.status_message.setText("File saved")
+                # QTimer.singleShot(2000, lambda: self.status_message.setText(""))
+
+    # def save_all_files(self):
+        # """Save all modified files"""
+        # self.tab_manager.save_all_tabs()
+
+	# NEED TO TEST THIS
     def save_all_files(self):
-        """Save all modified files"""
-        self.tab_manager.save_all_tabs()
+        """Save all modified files across all editor groups"""
+        if hasattr(self, 'split_manager'):
+            # Save across all groups
+            saved_count = 0
+            for editor in self.split_manager.get_all_editors():
+                if editor.document().isModified():
+                    if editor.save_file():
+                        editor.document().setModified(False)
+                        self.on_editor_modified(editor)
+                        saved_count += 1
+            
+            if saved_count > 0:
+                self.status_message.setText(f"Saved {saved_count} file(s)")
+                QTimer.singleShot(3000, lambda: self.status_message.setText(""))
+        else:
+            self.tab_manager.save_all_tabs()
+
 
     def close_current_tab(self):
         """Close current tab"""
@@ -364,6 +446,37 @@ class WorkspaceIDE(QMainWindow):
     def close_all_tabs(self):
         """Close all tabs"""
         self.tab_manager.close_all_tabs()
+
+
+    # =====================================================================
+    # Helper Methods
+    # =====================================================================
+    
+    def get_current_editor(self):
+        """Get the current editor from the active split group"""
+        if hasattr(self, 'split_manager'):
+            active_group = self.split_manager.get_active_group()
+            editor = active_group.get_current_editor()
+            
+            # DEBUG: Print which editor we got
+            if isinstance(editor, CodeEditor):
+                print(f"[DEBUG] Active group: {self.split_manager.active_group_id}")
+                print(f"[DEBUG] Editor file: {editor.file_path}")
+            
+            return editor
+        else:
+            return self.tabs.currentWidget()
+
+    # def get_current_editor(self):
+        # """
+        # Get the current editor from the active split group
+        # Helper method to avoid code duplication
+        # """
+        # if hasattr(self, 'split_manager'):
+            # active_group = self.split_manager.get_active_group()
+            # return active_group.get_current_editor()
+        # else:
+            # return self.tabs.currentWidget()
 
     # =====================================================================
     # File Explorer Context Menu
@@ -604,16 +717,24 @@ class WorkspaceIDE(QMainWindow):
                     self.settings_manager.settings
                 )
 
-    # =====================================================================
-    # Find/Replace
-    # =====================================================================
 
+    # =====================================================================
+    # Find/Replace Operations
+    # =====================================================================
+    
     def show_find_replace(self):
         """Show find/replace widget"""
-        current_widget = self.tabs.currentWidget()
+        current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             self.find_replace.set_editor(current_widget)
             self.find_replace.show_find()
+
+    # def show_find_replace(self):
+        # """Show find/replace widget"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # self.find_replace.set_editor(current_widget)
+            # self.find_replace.show_find()
 
     def find_next(self):
         """Find next occurrence"""
@@ -625,57 +746,106 @@ class WorkspaceIDE(QMainWindow):
         if self.find_replace.isVisible():
             self.find_replace.find_previous()
 
+
     # =====================================================================
     # Edit Operations
     # =====================================================================
-
+    
+    def toggle_comment(self):
+        """Toggle comments in current editor"""
+        current_widget = self.get_current_editor()
+        if isinstance(current_widget, CodeEditor):
+            current_widget.toggle_comment()
+    
+    def duplicate_line(self):
+        """Duplicate current line or selection"""
+        current_widget = self.get_current_editor()
+        if isinstance(current_widget, CodeEditor):
+            current_widget.duplicate_line_or_selection()
+    
     def undo_current(self):
         """Undo in current editor"""
-        current_widget = self.tabs.currentWidget()
+        current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.undo()
-
+    
     def redo_current(self):
         """Redo in current editor"""
-        current_widget = self.tabs.currentWidget()
+        current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.redo()
-
+    
     def cut_current(self):
         """Cut in current editor"""
-        current_widget = self.tabs.currentWidget()
+        current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.cut()
-
+    
     def copy_current(self):
         """Copy in current editor"""
-        current_widget = self.tabs.currentWidget()
+        current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.copy()
-
+    
     def paste_current(self):
         """Paste in current editor"""
-        current_widget = self.tabs.currentWidget()
+        current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.paste()
-
+    
     def select_all_current(self):
         """Select all in current editor"""
-        current_widget = self.tabs.currentWidget()
+        current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.selectAll()
 
-    def toggle_comment(self):
-        """Toggle comments in current editor"""
-        current_widget = self.tabs.currentWidget()
-        if isinstance(current_widget, CodeEditor):
-            current_widget.toggle_comment()
+    # def undo_current(self):
+        # """Undo in current editor"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # current_widget.undo()
 
-    def duplicate_line(self):
-        """Duplicate current line or selection"""
-        current_widget = self.tabs.currentWidget()
-        if isinstance(current_widget, CodeEditor):
-            current_widget.duplicate_line_or_selection()
+    # def redo_current(self):
+        # """Redo in current editor"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # current_widget.redo()
+
+    # def cut_current(self):
+        # """Cut in current editor"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # current_widget.cut()
+
+    # def copy_current(self):
+        # """Copy in current editor"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # current_widget.copy()
+
+    # def paste_current(self):
+        # """Paste in current editor"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # current_widget.paste()
+
+    # def select_all_current(self):
+        # """Select all in current editor"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # current_widget.selectAll()
+
+    # def toggle_comment(self):
+        # """Toggle comments in current editor"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # current_widget.toggle_comment()
+
+    # def duplicate_line(self):
+        # """Duplicate current line or selection"""
+        # current_widget = self.tabs.currentWidget()
+        # if isinstance(current_widget, CodeEditor):
+            # current_widget.duplicate_line_or_selection()
 
 
 
@@ -719,11 +889,11 @@ class WorkspaceIDE(QMainWindow):
         """Go to line dialog"""
         from PyQt6.QtWidgets import QInputDialog
         from PyQt6.QtGui import QTextCursor
-
-        current_widget = self.tabs.currentWidget()
+    
+        current_widget = self.get_current_editor()
         if not isinstance(current_widget, CodeEditor):
             return
-
+    
         line_number, ok = QInputDialog.getInt(
             self,
             "Go to Line",
@@ -732,7 +902,7 @@ class WorkspaceIDE(QMainWindow):
             1,
             current_widget.blockCount()
         )
-
+    
         if ok:
             cursor = current_widget.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.Start)
@@ -744,6 +914,35 @@ class WorkspaceIDE(QMainWindow):
             current_widget.setTextCursor(cursor)
             current_widget.ensureCursorVisible()
 
+    # def go_to_line(self):
+        # """Go to line dialog"""
+        # from PyQt6.QtWidgets import QInputDialog
+        # from PyQt6.QtGui import QTextCursor
+
+        # current_widget = self.tabs.currentWidget()
+        # if not isinstance(current_widget, CodeEditor):
+            # return
+
+        # line_number, ok = QInputDialog.getInt(
+            # self,
+            # "Go to Line",
+            # "Enter line number:",
+            # 1,
+            # 1,
+            # current_widget.blockCount()
+        # )
+
+        # if ok:
+            # cursor = current_widget.textCursor()
+            # cursor.movePosition(QTextCursor.MoveOperation.Start)
+            # cursor.movePosition(
+                # QTextCursor.MoveOperation.Down,
+                # QTextCursor.MoveMode.MoveAnchor,
+                # line_number - 1
+            # )
+            # current_widget.setTextCursor(cursor)
+            # current_widget.ensureCursorVisible()
+
     # =====================================================================
     # Run Operations
     # =====================================================================
@@ -752,33 +951,32 @@ class WorkspaceIDE(QMainWindow):
         """Run the current file"""
         import subprocess
         import webbrowser
-
-        current_widget = self.tabs.currentWidget()
+    
+        current_widget = self.get_current_editor()
         if not isinstance(current_widget, CodeEditor) or not current_widget.file_path:
             QMessageBox.warning(self, "No File", "No file open to run")
             return
-
+    
         file_path = Path(current_widget.file_path).resolve()
-
+    
         # Determine command based on file type
         command_map = {
-            '.py'  : f'python3 "{file_path}"',
-            '.php' : f'php "{file_path}"',
-            '.js'  : f'node "{file_path}"',
-            '.cjs' : f'node "{file_path}"',
-            '.mjs' : f'node "{file_path}"',
-            '.sh'  : f'bash "{file_path}"',
-            '.bash': f'bash "{file_path}"'
+            '.py': f'python3 "{file_path}"',
+            '.php': f'php "{file_path}"',
+            '.js': f'node "{file_path}"',
+            '.cjs': f'node "{file_path}"',
+            '.mjs': f'node "{file_path}"',
+            '.sh': f'bash "{file_path}"'
         }
-
+    
         if file_path.suffix in {'.html', '.htm'}:
             webbrowser.open(file_path.as_uri())
             self.status_message.setText(f"Opened {file_path.name} in browser")
             QTimer.singleShot(3000, lambda: self.status_message.setText(""))
             return
-
+    
         command = command_map.get(file_path.suffix)
-
+    
         if command is None:
             QMessageBox.information(
                 self,
@@ -786,12 +984,14 @@ class WorkspaceIDE(QMainWindow):
                 f"Don't know how to run {file_path.suffix} files automatically.\n\n"
                 f"You can run it manually in a terminal:\n\n{file_path}"
             )
-
+            return
+    
         self.open_external_terminal(str(file_path.parent), command)
-
+    
         if command:
             self.status_message.setText(f"Running {file_path.name}...")
             QTimer.singleShot(4000, lambda: self.status_message.setText(""))
+
 
     def open_external_terminal(self, directory=None, command=None):
         """Open external terminal"""
@@ -858,9 +1058,8 @@ class WorkspaceIDE(QMainWindow):
     def send_to_ollama(self):
         """Send current editor content to Ollama"""
         from PyQt6.QtWidgets import QInputDialog, QLineEdit
-
-        current_widget = self.tabs.currentWidget()
-
+    
+        current_widget = self.get_current_editor()
         if not isinstance(current_widget, CodeEditor):
             QMessageBox.warning(
                 self,
@@ -868,7 +1067,7 @@ class WorkspaceIDE(QMainWindow):
                 "Please open a file first before sending to Ollama."
             )
             return
-
+    
         cursor = current_widget.textCursor()
         if cursor.hasSelection():
             text_to_send = cursor.selectedText().replace('\u2029', '\n')
@@ -876,7 +1075,7 @@ class WorkspaceIDE(QMainWindow):
         else:
             text_to_send = current_widget.toPlainText()
             text_type = "entire file"
-
+    
         if not text_to_send.strip():
             QMessageBox.warning(
                 self,
@@ -884,7 +1083,7 @@ class WorkspaceIDE(QMainWindow):
                 "No text to send. Please select some text or make sure the file has content."
             )
             return
-
+    
         prompt, ok = QInputDialog.getText(
             self,
             "Send to Ollama",
@@ -892,13 +1091,58 @@ class WorkspaceIDE(QMainWindow):
             QLineEdit.EchoMode.Normal,
             "Explain this code:"
         )
-
+    
         if ok and prompt.strip():
             full_message = f"{prompt}\n\n```\n{text_to_send}\n```"
             self.ollama_widget.send_text_message(full_message)
             self.show_ollama_panel()
             self.status_message.setText(f"Sent {len(text_to_send)} characters to Ollama")
             QTimer.singleShot(3000, lambda: self.status_message.setText(""))
+
+    # def send_to_ollama(self):
+        # """Send current editor content to Ollama"""
+        # from PyQt6.QtWidgets import QInputDialog, QLineEdit
+
+        # current_widget = self.tabs.currentWidget()
+
+        # if not isinstance(current_widget, CodeEditor):
+            # QMessageBox.warning(
+                # self,
+                # "No Editor",
+                # "Please open a file first before sending to Ollama."
+            # )
+            # return
+
+        # cursor = current_widget.textCursor()
+        # if cursor.hasSelection():
+            # text_to_send = cursor.selectedText().replace('\u2029', '\n')
+            # text_type = "selected text"
+        # else:
+            # text_to_send = current_widget.toPlainText()
+            # text_type = "entire file"
+
+        # if not text_to_send.strip():
+            # QMessageBox.warning(
+                # self,
+                # "No Text",
+                # "No text to send. Please select some text or make sure the file has content."
+            # )
+            # return
+
+        # prompt, ok = QInputDialog.getText(
+            # self,
+            # "Send to Ollama",
+            # f"Enter your instruction for Ollama:\n(Sending {text_type}, {len(text_to_send)} characters)",
+            # QLineEdit.EchoMode.Normal,
+            # "Explain this code:"
+        # )
+
+        # if ok and prompt.strip():
+            # full_message = f"{prompt}\n\n```\n{text_to_send}\n```"
+            # self.ollama_widget.send_text_message(full_message)
+            # self.show_ollama_panel()
+            # self.status_message.setText(f"Sent {len(text_to_send)} characters to Ollama")
+            # QTimer.singleShot(3000, lambda: self.status_message.setText(""))
 
     # =====================================================================
     # Settings & Dialogs

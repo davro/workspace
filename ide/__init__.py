@@ -2,5 +2,5 @@
 # __init__ constants
 # =====================================================================
 
-VERSION = "0.0.12"
+VERSION = "0.0.13"
 WORKSPACE_PATH = "workspace"

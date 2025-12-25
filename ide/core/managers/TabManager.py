@@ -23,37 +23,96 @@ class TabManager:
             widget = self.tabs.widget(i)
             if isinstance(widget, CodeEditor) and widget.file_path == str(path):
                 self.tabs.setCurrentIndex(i)
-                
+
                 # Track in recent files when switching to existing tab
                 if hasattr(self.parent, 'recent_files_manager'):
                     self.parent.recent_files_manager.add_file(str(path))
-                
+
                 return widget
-    
+
         # Create new editor
         if settings is None:
             settings = {}
-        
+
         editor = CodeEditor(
             font_size=settings.get('editor_font_size', 11),
             tab_width=settings.get('tab_width', 4),
             show_line_numbers=settings.get('show_line_numbers', True),
-            gutter_width=settings.get('gutter_width', 10)  # ADD THIS
+            gutter_width=settings.get('gutter_width', 10)
         )
-        
+
         if editor.load_file(str(path)):
             tab_index = self.tabs.addTab(editor, path.name)
             self.tabs.setTabToolTip(tab_index, str(path))
             editor.textChanged.connect(lambda: self.parent.on_editor_modified(editor))
             self.tabs.setCurrentWidget(editor)
-            
+
+            # CRITICAL: Add focus handler for split view
+            self._add_focus_handler_if_needed(editor)
+
             # Track in recent files when opening new file
             if hasattr(self.parent, 'recent_files_manager'):
                 self.parent.recent_files_manager.add_file(str(path))
-            
+
             return editor
-        
+
         return None
+
+    # def open_file_by_path(self, path, settings=None):
+        # """Open a file in a new tab or switch to existing tab"""
+        # # Check if already open
+        # for i in range(self.tabs.count()):
+            # widget = self.tabs.widget(i)
+            # if isinstance(widget, CodeEditor) and widget.file_path == str(path):
+                # self.tabs.setCurrentIndex(i)
+
+                # # Track in recent files when switching to existing tab
+                # if hasattr(self.parent, 'recent_files_manager'):
+                    # self.parent.recent_files_manager.add_file(str(path))
+
+                # return widget
+
+        # # Create new editor
+        # if settings is None:
+            # settings = {}
+
+        # editor = CodeEditor(
+            # font_size=settings.get('editor_font_size', 11),
+            # tab_width=settings.get('tab_width', 4),
+            # show_line_numbers=settings.get('show_line_numbers', True),
+            # gutter_width=settings.get('gutter_width', 10)  # ADD THIS
+        # )
+
+        # if editor.load_file(str(path)):
+            # tab_index = self.tabs.addTab(editor, path.name)
+            # self.tabs.setTabToolTip(tab_index, str(path))
+            # editor.textChanged.connect(lambda: self.parent.on_editor_modified(editor))
+            # self.tabs.setCurrentWidget(editor)
+
+            # # Track in recent files when opening new file
+            # if hasattr(self.parent, 'recent_files_manager'):
+                # self.parent.recent_files_manager.add_file(str(path))
+
+            # return editor
+
+        # return None
+
+
+
+    def _add_focus_handler_if_needed(self, editor):
+        """Add focus handler to editor if in split view"""
+        if not hasattr(self.parent, 'split_manager'):
+            return
+
+        if not self.parent.split_manager.is_split():
+            return
+
+        # Find which group this editor belongs to
+        for group_id, group in enumerate(self.parent.split_manager.groups):
+            if group.tabs == self.tabs:
+                # Found the group - add focus handler
+                self.parent.split_manager.add_focus_handler_to_editor(editor, group_id)
+                break
 
 
     def close_tab(self, index):
@@ -139,20 +198,20 @@ class TabManager:
     def send_tab_to_ollama(self, tab_index, send_all=False):
         """Send tab content to Ollama with smart context"""
         from ide.core.OllamaContext import OllamaContextBuilder
-        
+
         editor = self.tabs.widget(tab_index)
         if not isinstance(editor, CodeEditor):
             return
-    
+
         # Get context level from settings
         context_level = 'smart'
         if hasattr(self.parent, 'settings_manager'):
             context_level = self.parent.settings_manager.get('ollama_context_level', 'smart')
-        
+
         # Build context
         context_builder = OllamaContextBuilder()
         context = context_builder.build_context(editor, level=context_level)
-        
+
         # Get text to send
         if send_all:
             text_to_send = editor.toPlainText()
@@ -177,14 +236,14 @@ class TabManager:
                     "Please select some text first, or use 'Send Entire File to Ollama'."
                 )
                 return
-    
+
         if not text_to_send.strip():
             QMessageBox.warning(self.parent, "No Text", "No text to send.")
             return
-    
+
         # Show context preview dialog - PASS ollama_widget
         from ide.core.OllamaContextDialog import OllamaContextDialog
-        
+
         dialog = OllamaContextDialog(
             self.parent,
             context,
@@ -192,11 +251,11 @@ class TabManager:
             text_type,
             self.parent.ollama_widget  # ADD THIS - pass the Ollama widget
         )
-        
+
         if dialog.exec() == QMessageBox.DialogCode.Accepted:
             # User confirmed, send with selected context level
             final_context_level = dialog.get_context_level()
-            
+
             # Rebuild context with final level
             context = context_builder.build_context(editor, level=final_context_level)
             if send_all:
@@ -207,19 +266,19 @@ class TabManager:
                     'char_count': len(text_to_send),
                     'text': text_to_send
                 }
-            
+
             # Format full message
             context_text = context_builder.format_context(context, include_code=True)
             user_prompt = dialog.get_prompt()
-            
+
             full_message = f"{user_prompt}\n\n{context_text}"
-            
+
             # Model selection is already synced in dialog.accept()
             self.parent.ollama_widget.send_text_message(full_message)
             self.parent.show_ollama_panel()
             self.parent.status_message.setText(f"Sent {len(text_to_send)} characters with context to Ollama")
             QTimer.singleShot(3000, lambda: self.parent.status_message.setText(""))
-    
+
 
 
     def get_current_editor(self):

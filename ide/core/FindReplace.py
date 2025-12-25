@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QTextEdit,
     QMessageBox,
+    QSizePolicy,
 )
 from PyQt6.QtGui import (
     QColor,
@@ -17,7 +18,6 @@ from PyQt6.QtGui import (
 from PyQt6.QtCore import Qt, QRegularExpression
 
 
-# ---------------------- Find & Replace Widget ----------------------
 class FindReplaceWidget(QFrame):
     """Find and Replace panel widget"""
 
@@ -26,6 +26,11 @@ class FindReplaceWidget(QFrame):
         self.editor = None
         self.current_match_index = -1
         self.matches = []
+
+        # Set size policy to prevent expansion
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMaximumHeight(100)
+        self.setMinimumHeight(100)
 
         self.setStyleSheet("""
             QFrame {
@@ -64,45 +69,55 @@ class FindReplaceWidget(QFrame):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(3)
 
+        # Find row
         find_row = QHBoxLayout()
         self.find_input = QLineEdit()
         self.find_input.setPlaceholderText("Find")
+        self.find_input.setFixedHeight(24)
         self.find_input.textChanged.connect(self.on_find_text_changed)
         self.find_input.returnPressed.connect(self.find_next)
         find_row.addWidget(self.find_input)
 
         self.match_label = QLabel("No matches")
         self.match_label.setStyleSheet("color: #999;")
+        self.match_label.setFixedWidth(100)
         find_row.addWidget(self.match_label)
 
         prev_btn = QPushButton("↑")
         prev_btn.setToolTip("Previous (Shift+F3)")
+        prev_btn.setFixedSize(24, 24)
         prev_btn.clicked.connect(self.find_previous)
         find_row.addWidget(prev_btn)
 
         next_btn = QPushButton("↓")
         next_btn.setToolTip("Next (F3)")
+        next_btn.setFixedSize(24, 24)
         next_btn.clicked.connect(self.find_next)
         find_row.addWidget(next_btn)
 
         layout.addLayout(find_row)
 
+        # Replace row
         replace_row = QHBoxLayout()
         self.replace_input = QLineEdit()
         self.replace_input.setPlaceholderText("Replace")
+        self.replace_input.setFixedHeight(24)
         self.replace_input.returnPressed.connect(self.replace_current)
         replace_row.addWidget(self.replace_input)
 
         replace_btn = QPushButton("Replace")
+        replace_btn.setFixedHeight(24)
         replace_btn.clicked.connect(self.replace_current)
         replace_row.addWidget(replace_btn)
 
         replace_all_btn = QPushButton("Replace All")
+        replace_all_btn.setFixedHeight(24)
         replace_all_btn.clicked.connect(self.replace_all)
         replace_row.addWidget(replace_all_btn)
 
         layout.addLayout(replace_row)
 
+        # Options row
         options_row = QHBoxLayout()
         self.case_sensitive = QCheckBox("Match Case")
         self.case_sensitive.stateChanged.connect(self.on_find_text_changed)
@@ -123,7 +138,7 @@ class FindReplaceWidget(QFrame):
         options_row.addStretch()
 
         close_btn = QPushButton("✖")
-        close_btn.setFixedWidth(25)
+        close_btn.setFixedSize(24, 24)
         close_btn.clicked.connect(self.hide)
         options_row.addWidget(close_btn)
 
@@ -207,7 +222,10 @@ class FindReplaceWidget(QFrame):
                 self.matches.append((cursor.selectionStart(), cursor.selectionEnd()))
 
     def highlight_all_matches(self):
+        """Use CodeEditor's new selection system"""
         if not self.editor or not self.matches:
+            if self.editor and hasattr(self.editor, 'set_find_replace_selections'):
+                self.editor.set_find_replace_selections([])
             return
 
         extra_selections = []
@@ -219,9 +237,15 @@ class FindReplaceWidget(QFrame):
             selection.format.setBackground(QColor("#4A4A4A"))
             extra_selections.append(selection)
 
-        self.editor.setExtraSelections(extra_selections)
+        # Use CodeEditor's method to avoid overwriting current line highlight
+        if hasattr(self.editor, 'set_find_replace_selections'):
+            self.editor.set_find_replace_selections(extra_selections)
+        else:
+            # Fallback for non-split editors
+            self.editor.setExtraSelections(extra_selections)
 
     def highlight_current_match(self):
+        """Use CodeEditor's new selection system"""
         if not self.editor or not self.matches or self.current_match_index < 0:
             return
 
@@ -241,7 +265,11 @@ class FindReplaceWidget(QFrame):
 
             extra_selections.append(selection)
 
-        self.editor.setExtraSelections(extra_selections)
+        # Use CodeEditor's method
+        if hasattr(self.editor, 'set_find_replace_selections'):
+            self.editor.set_find_replace_selections(extra_selections)
+        else:
+            self.editor.setExtraSelections(extra_selections)
 
         cursor = self.editor.textCursor()
         cursor.setPosition(start)
@@ -250,8 +278,12 @@ class FindReplaceWidget(QFrame):
         self.editor.ensureCursorVisible()
 
     def clear_highlights(self):
+        """Clear find/replace highlights"""
         if self.editor:
-            self.editor.setExtraSelections([])
+            if hasattr(self.editor, 'set_find_replace_selections'):
+                self.editor.set_find_replace_selections([])
+            else:
+                self.editor.setExtraSelections([])
         self.matches = []
         self.current_match_index = -1
 

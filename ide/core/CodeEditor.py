@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
+from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QMessageBox
 from PyQt6.QtGui import (
     QColor, 
     QPainter, 
@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt, QRect, QSize
 
 from ide.core.SyntaxHighlighter import PythonHighlighter
 
+# TEST
 class LineNumberArea(QWidget):
     def __init__(self, editor):
         super().__init__(editor)
@@ -28,9 +29,8 @@ class LineNumberArea(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
-    # def __init__(self, font_size=11, tab_width=4, 
     def __init__(self, file_path=None, font_size=11, tab_width=4, 
-				show_line_numbers=True, gutter_width=10):
+                show_line_numbers=True, gutter_width=10):
         """
         Initialize code editor
         
@@ -51,10 +51,6 @@ class CodeEditor(QPlainTextEdit):
             "QPlainTextEdit { background-color: #2B2B2B; color: #A9B7C6; border: none; }"
         )
 
-        # Tab width in spaces
-        #char_width = self.fontMetrics().horizontalAdvance(' ')
-        #self.setTabStopDistance(tab_width * char_width)
-
         # Tab settings
         self.setTabStopDistance(
             QFontMetricsF(self.font()).horizontalAdvance(' ') * tab_width
@@ -65,9 +61,12 @@ class CodeEditor(QPlainTextEdit):
         self.highlighter = None
         self.show_line_numbers = show_line_numbers
         self.gutter_width = gutter_width
+        
+        # Track extra selections separately to avoid conflicts
+        self.current_line_selection = None
+        self.find_replace_selections = []
 
         # Line number area
-        #self.line_number_area = LineNumberArea(self)
         self.line_number_area = LineNumberArea(self) if show_line_numbers else None
 
         # Connect signals
@@ -94,26 +93,20 @@ class CodeEditor(QPlainTextEdit):
 
     def update_line_number_area_width(self, _):
         """Update the viewport margins to accommodate line numbers + gutter"""
-        # Always add gutter width as left margin, even when line numbers are hidden
         left_margin = self.line_number_area_width()
         self.setViewportMargins(left_margin, 0, 0, 0)
-
 
     def line_number_area_width(self):
         """Calculate the width needed for line numbers + gutter"""
         if not self.show_line_numbers or not self.line_number_area:
-            # Even without line numbers, add gutter for spacing
             return self.gutter_width
         
         digits = len(str(max(1, self.blockCount())))
-        # Width = left_padding(3) + digit_width * digits + gutter_width
         space = 3 + self.fontMetrics().horizontalAdvance('9') * digits + self.gutter_width
         return space
 
-
     def update_line_number_area(self, rect, dy):
         """Update the line number area when the editor scrolls or updates"""
-        # ADD THIS CHECK at the beginning
         if not self.line_number_area:
             return
         
@@ -127,77 +120,48 @@ class CodeEditor(QPlainTextEdit):
         if rect.contains(self.viewport().rect()):
             self.update_line_number_area_width(0)
 
-
     def set_gutter_width(self, width):
-        """
-        Set the gutter width and update display
-        
-        Args:
-            width: Gutter width in pixels
-        """
+        """Set the gutter width and update display"""
         self.gutter_width = width
         self.update_line_number_area_width(0)
         if self.line_number_area:
             self.line_number_area.update()
 
-
     def set_show_line_numbers(self, show):
-        """
-        Toggle line numbers display
-        
-        Args:
-            show: True to show line numbers, False to hide
-        """
+        """Toggle line numbers display"""
         self.show_line_numbers = show
         
         if show and not self.line_number_area:
-            # Create line number area
             self.line_number_area = LineNumberArea(self)
             self.blockCountChanged.connect(self.update_line_number_area_width)
             self.updateRequest.connect(self.update_line_number_area)
             self.line_number_area.show()
         elif not show and self.line_number_area:
-            # Hide line number area
             self.line_number_area.hide()
         
         self.update_line_number_area_width(0)
 
-
     def set_font_size(self, size):
-        """
-        Set font size and update display
-        
-        Args:
-            size: Font size in points
-        """
+        """Set font size and update display"""
         font = self.font()
         font.setPointSize(size)
         self.setFont(font)
         
-        # Update tab stops for new font size
         tab_width = int(self.tabStopDistance() / 
                        QFontMetricsF(font).horizontalAdvance(' '))
         self.setTabStopDistance(
             QFontMetricsF(font).horizontalAdvance(' ') * tab_width
         )
         
-        # Update line number area
         self.update_line_number_area_width(0)
         if self.line_number_area:
             self.line_number_area.update()
 
-
     def set_tab_width(self, width):
-        """
-        Set tab width and update display
-        
-        Args:
-            width: Tab width in spaces
-        """
+        """Set tab width and update display"""
         self.setTabStopDistance(
             QFontMetricsF(self.font()).horizontalAdvance(' ') * width
         )
-
 
     def resizeEvent(self, event):
         """Handle resize events to update line number area"""
@@ -207,24 +171,12 @@ class CodeEditor(QPlainTextEdit):
             return
         
         cr = self.contentsRect()
-        # Line number area width should NOT include the gutter in its geometry
-        # The gutter is spacing AFTER the line numbers
         digits = len(str(max(1, self.blockCount())))
         line_number_width = 3 + self.fontMetrics().horizontalAdvance('9') * digits
         
         self.line_number_area.setGeometry(
             QRect(cr.left(), cr.top(), line_number_width, cr.height())
         )
-
-    def paint_line_numbers(self, event):
-        """Paint line numbers in the line number area"""
-        # ADD THIS CHECK
-        if not self.line_number_area:
-            return
-        
-        painter = QPainter(self.line_number_area)
-        painter.fillRect(event.rect(), QColor("#313335"))
-        # ... rest of painting code
 
     def line_number_area_paint_event(self, event):
         painter = QPainter(self.line_number_area)
@@ -254,22 +206,43 @@ class CodeEditor(QPlainTextEdit):
             block_number += 1
 
     def highlight_current_line(self):
-        extra_selections = []
+        """Highlight the current line - works with extra selections"""
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
             selection.format.setBackground(QColor("#2F3437"))
             selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             selection.cursor = self.textCursor()
             selection.cursor.clearSelection()
-            extra_selections.append(selection)
-        self.setExtraSelections(extra_selections)
+            self.current_line_selection = selection
+        else:
+            self.current_line_selection = None
+        
+        self._update_extra_selections()
+    
+    def set_find_replace_selections(self, selections):
+        """Set find/replace selections (called by FindReplaceWidget)"""
+        self.find_replace_selections = selections
+        self._update_extra_selections()
+    
+    def _update_extra_selections(self):
+        """Update all extra selections (current line + find/replace)"""
+        all_selections = []
+        
+        # Add find/replace selections first (so they're under current line)
+        all_selections.extend(self.find_replace_selections)
+        
+        # Add current line selection on top
+        if self.current_line_selection:
+            all_selections.append(self.current_line_selection)
+        
+        self.setExtraSelections(all_selections)
 
     # ------------------------------------------------------------------
     # Modification tracking
     # ------------------------------------------------------------------
     def on_text_changed(self):
         """Notify the main window when the document's modified state changes"""
-        # Walk up the parent chain to find the WorkspaceIDE instance
+        # Find the WorkspaceIDE instance
         parent = self.parent()
         while parent is not None:
             if hasattr(parent, "on_editor_modified"):
@@ -285,7 +258,7 @@ class CodeEditor(QPlainTextEdit):
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            # Prevent textChanged signals during load (avoids false modified state)
+            # Prevent textChanged signals during load
             self.blockSignals(True)
             self.setPlainText(content)
             self.blockSignals(False)
@@ -296,9 +269,7 @@ class CodeEditor(QPlainTextEdit):
             if str(path).lower().endswith(".py"):
                 self.highlighter = PythonHighlighter(self.document())
 
-            # Clear Qt's built-in modified flag
             self.document().setModified(False)
-
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error loading file", str(e))
@@ -312,16 +283,14 @@ class CodeEditor(QPlainTextEdit):
             with open(self.file_path, "w", encoding="utf-8") as f:
                 f.write(self.toPlainText())
 
-            # Tell Qt the document is now saved → clears the modified flag
             self.document().setModified(False)
-
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error saving file", str(e))
             return False
 
     # =====================================================================
-    # Feature: Comment Toggle (Ctrl+/) and Indent/Unindent
+    # Feature: Comment Toggle (Ctrl+/) - FIXED VERSION
     # =====================================================================
     def toggle_comment(self):
         cursor = self.textCursor()
@@ -361,15 +330,22 @@ class CodeEditor(QPlainTextEdit):
             line_text = block_cursor.selectedText()
 
             if all_commented:
-                # Uncomment
+                # Uncomment - FIXED: Remove comment prefix and ONE space after it
                 if line_text.lstrip().startswith(comment_prefix):
-                    idx = line_text.find(comment_prefix)
-                    new_text = line_text[:idx] + line_text[idx + len(comment_prefix):]
-                    if new_text.lstrip().startswith(' '):
-                        new_text = new_text[:idx] + new_text[idx + 1:]
+                    # Find where comment starts
+                    indent = len(line_text) - len(line_text.lstrip())
+                    comment_start = indent
+                    
+                    # Remove comment prefix
+                    new_text = line_text[:comment_start] + line_text[comment_start + len(comment_prefix):]
+                    
+                    # Remove ONE space after comment if it exists
+                    if new_text[comment_start:comment_start + 1] == ' ':
+                        new_text = new_text[:comment_start] + new_text[comment_start + 1:]
+                    
                     block_cursor.insertText(new_text)
             else:
-                # Comment
+                # Comment - add comment with space
                 if line_text.strip():
                     indent = len(line_text) - len(line_text.lstrip())
                     block_cursor.insertText(indent * " " + comment_prefix + " " + line_text.lstrip())
@@ -436,7 +412,6 @@ class CodeEditor(QPlainTextEdit):
                     block_cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
                     block_cursor.removeSelectedText()
                 else:
-                    # Remove as many leading spaces as possible
                     spaces = len(selected) - len(selected.lstrip(" "))
                     if spaces > 0:
                         block_cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
@@ -458,94 +433,52 @@ class CodeEditor(QPlainTextEdit):
 
         super().keyPressEvent(event)
 
-
     # ============================================================================
     # Duplicate Line
     # ============================================================================
         
     def duplicate_line_or_selection(self):
-        """
-        Duplicate the current line or selected text
-        
-        Behavior:
-        - If text is selected: Duplicates the selection immediately after
-        - If no selection: Duplicates the current line below it
-        - Cursor moves to the duplicated content
-        - Preserves indentation and formatting
-        """
+        """Duplicate the current line or selected text"""
         cursor = self.textCursor()
-        
-        # Start undo block for atomic operation
         cursor.beginEditBlock()
         
         try:
             if cursor.hasSelection():
-                # Duplicate selected text
                 self._duplicate_selection(cursor)
             else:
-                # Duplicate current line
                 self._duplicate_line(cursor)
         finally:
-            # End undo block
             cursor.endEditBlock()
         
-        # Update the cursor
         self.setTextCursor(cursor)
     
     def _duplicate_selection(self, cursor):
-        """
-        Duplicate the selected text
-        
-        Args:
-            cursor: QTextCursor with selection
-        """
-        # Get the selected text
+        """Duplicate the selected text"""
         selected_text = cursor.selectedText()
-        
-        # QTextCursor uses U+2029 (paragraph separator) for newlines
-        # Convert to actual newlines for insertion
         selected_text = selected_text.replace('\u2029', '\n')
         
-        # Get selection boundaries
         selection_start = cursor.selectionStart()
         selection_end = cursor.selectionEnd()
         
-        # Move to end of selection
         cursor.setPosition(selection_end)
-        
-        # Insert newline and duplicated text
         cursor.insertText('\n' + selected_text)
         
-        # Select the newly inserted text
         new_end = cursor.position()
         new_start = new_end - len(selected_text)
         cursor.setPosition(new_start)
         cursor.setPosition(new_end, cursor.MoveMode.KeepAnchor)
     
     def _duplicate_line(self, cursor):
-        """
-        Duplicate the current line
-        
-        Args:
-            cursor: QTextCursor on current line
-        """
-        # Save current position in line
+        """Duplicate the current line"""
         original_position = cursor.positionInBlock()
         
-        # Select the entire current line
         cursor.movePosition(cursor.MoveOperation.StartOfBlock)
         cursor.movePosition(cursor.MoveOperation.EndOfBlock, cursor.MoveMode.KeepAnchor)
         
-        # Get the line text
         line_text = cursor.selectedText()
-        
-        # Move to end of line
         cursor.movePosition(cursor.MoveOperation.EndOfBlock)
-        
-        # Insert newline and duplicated line
         cursor.insertText('\n' + line_text)
         
-        # Position cursor at same column in duplicated line
         cursor.movePosition(cursor.MoveOperation.StartOfBlock)
         cursor.movePosition(
             cursor.MoveOperation.Right,
