@@ -58,47 +58,6 @@ class TabManager:
 
         return None
 
-    # def open_file_by_path(self, path, settings=None):
-        # """Open a file in a new tab or switch to existing tab"""
-        # # Check if already open
-        # for i in range(self.tabs.count()):
-            # widget = self.tabs.widget(i)
-            # if isinstance(widget, CodeEditor) and widget.file_path == str(path):
-                # self.tabs.setCurrentIndex(i)
-
-                # # Track in recent files when switching to existing tab
-                # if hasattr(self.parent, 'recent_files_manager'):
-                    # self.parent.recent_files_manager.add_file(str(path))
-
-                # return widget
-
-        # # Create new editor
-        # if settings is None:
-            # settings = {}
-
-        # editor = CodeEditor(
-            # font_size=settings.get('editor_font_size', 11),
-            # tab_width=settings.get('tab_width', 4),
-            # show_line_numbers=settings.get('show_line_numbers', True),
-            # gutter_width=settings.get('gutter_width', 10)  # ADD THIS
-        # )
-
-        # if editor.load_file(str(path)):
-            # tab_index = self.tabs.addTab(editor, path.name)
-            # self.tabs.setTabToolTip(tab_index, str(path))
-            # editor.textChanged.connect(lambda: self.parent.on_editor_modified(editor))
-            # self.tabs.setCurrentWidget(editor)
-
-            # # Track in recent files when opening new file
-            # if hasattr(self.parent, 'recent_files_manager'):
-                # self.parent.recent_files_manager.add_file(str(path))
-
-            # return editor
-
-        # return None
-
-
-
     def _add_focus_handler_if_needed(self, editor):
         """Add focus handler to editor if in split view"""
         if not hasattr(self.parent, 'split_manager'):
@@ -113,7 +72,6 @@ class TabManager:
                 # Found the group - add focus handler
                 self.parent.split_manager.add_focus_handler_to_editor(editor, group_id)
                 break
-
 
     def close_tab(self, index):
         """Close a tab at the given index"""
@@ -193,7 +151,6 @@ class TabManager:
             QTimer.singleShot(2000, lambda: self.parent.status_message.setText(""))
 
         return saved_count
-
 
     def send_tab_to_ollama(self, tab_index, send_all=False):
         """Send tab content to Ollama with smart context"""
@@ -278,8 +235,6 @@ class TabManager:
             self.parent.show_ollama_panel()
             self.parent.status_message.setText(f"Sent {len(text_to_send)} characters with context to Ollama")
             QTimer.singleShot(3000, lambda: self.parent.status_message.setText(""))
-
-
 
     def get_current_editor(self):
         """Get the currently active editor"""

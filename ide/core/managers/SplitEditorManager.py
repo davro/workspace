@@ -540,5 +540,3 @@ class SplitEditorManager:
     def is_split(self):
         """Check if editor is currently split"""
         return self.splitter is not None
-
-

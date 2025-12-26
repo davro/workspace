@@ -152,11 +152,6 @@ class WorkspaceIDE(QMainWindow):
         self.ollama_panel_visible = False
         self.main_splitter.widget(2).hide()
 
-
-    """
-    Replace your _create_left_sidebar with this updated version:
-    """
-    
     def _create_left_sidebar(self):
         """Create left sidebar with file explorer and projects"""
         left_tabs = QTabWidget()
@@ -203,13 +198,10 @@ class WorkspaceIDE(QMainWindow):
     
         self.main_splitter.addWidget(left_tabs)
 
-	
-	
     """
-    Optional: Update TabManager to handle file moves
+    TEST Optional: Update TabManager to handle file moves
     Add this to workspace.py or TabManager.py
     """
-    
     def handle_file_moved(self, old_path: str, new_path: str):
         """
         Handle when a file is moved - update open tabs
@@ -234,7 +226,6 @@ class WorkspaceIDE(QMainWindow):
                 
                 # Show notification
                 self.status_message.setText(f"Updated tab: {new_name}")
-
 
     def _create_editor_area(self):
         """Create center editor area"""
@@ -261,7 +252,6 @@ class WorkspaceIDE(QMainWindow):
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
     
         self.main_splitter.addWidget(editor_container)
-
 
     def _create_right_sidebar(self):
         """Create right sidebar with Ollama chat and Outline"""
@@ -293,23 +283,6 @@ class WorkspaceIDE(QMainWindow):
         
         self.main_splitter.addWidget(right_tabs)
 
-    # def _create_right_sidebar(self):
-        # """Create right sidebar with Ollama chat"""
-        # self.ollama_widget = OllamaChatWidget(parent=self)
-        # self.ollama_widget.setMinimumWidth(300)
-
-        # ollama_container = QWidget()
-        # ollama_layout = QVBoxLayout(ollama_container)
-        # ollama_layout.setContentsMargins(5, 5, 5, 5)
-        # ollama_layout.setSpacing(5)
-
-        # ollama_header = QLabel("🤖 AI (Local)")
-        # ollama_header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
-        # ollama_layout.addWidget(ollama_header)
-        # ollama_layout.addWidget(self.ollama_widget)
-
-        # self.main_splitter.addWidget(ollama_container)
-
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts"""
         shortcuts = [
@@ -340,12 +313,6 @@ class WorkspaceIDE(QMainWindow):
     
     def focus_other_split(self):
         self.split_manager.focus_other_group()
-    
-    # def open_in_split(self):
-        # '''Open current file in split view'''
-        # current_editor = self.tabs.currentWidget()
-        # if isinstance(current_editor, CodeEditor) and current_editor.file_path:
-            # self.split_manager.open_file_in_split(current_editor.file_path)
 
     def open_in_split(self):
         """Open current file in split view"""
@@ -363,7 +330,6 @@ class WorkspaceIDE(QMainWindow):
                 "No file is currently open to split."
             )
 
-
     # Add this new method:
     def cycle_tabs_backward(self):
         """Cycle backwards through tabs in recent order (no popup)"""
@@ -378,7 +344,6 @@ class WorkspaceIDE(QMainWindow):
             next_tab = recent_order[-1]  # Last in recent order = oldest
             self.tabs.setCurrentIndex(next_tab)
             self.tab_order_manager.record_access(next_tab)
-
 
     def _create_menus(self):
         """Create all menus using MenuManager"""
@@ -433,16 +398,6 @@ class WorkspaceIDE(QMainWindow):
                 self.status_message.setText("File saved")
                 QTimer.singleShot(2000, lambda: self.status_message.setText(""))
 
-    # def save_current_file(self):
-        # """Save current file"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # if current_widget.save_file():
-                # current_widget.document().setModified(False)
-                # self.on_editor_modified(current_widget)
-                # self.status_message.setText("File saved")
-                # QTimer.singleShot(2000, lambda: self.status_message.setText(""))
-
     # def save_all_files(self):
         # """Save all modified files"""
         # self.tab_manager.save_all_tabs()
@@ -494,32 +449,6 @@ class WorkspaceIDE(QMainWindow):
             return editor
         else:
             return self.tabs.currentWidget()
-
-    # def get_current_editor(self):
-        # """Get the current editor from the active split group"""
-        # if hasattr(self, 'split_manager'):
-            # active_group = self.split_manager.get_active_group()
-            # editor = active_group.get_current_editor()
-            
-            # # DEBUG: Print which editor we got
-            # if isinstance(editor, CodeEditor):
-                # print(f"[DEBUG] Active group: {self.split_manager.active_group_id}")
-                # print(f"[DEBUG] Editor file: {editor.file_path}")
-            
-            # return editor
-        # else:
-            # return self.tabs.currentWidget()
-
-    # def get_current_editor(self):
-        # """
-        # Get the current editor from the active split group
-        # Helper method to avoid code duplication
-        # """
-        # if hasattr(self, 'split_manager'):
-            # active_group = self.split_manager.get_active_group()
-            # return active_group.get_current_editor()
-        # else:
-            # return self.tabs.currentWidget()
 
     # =====================================================================
     # File Explorer Context Menu
@@ -847,56 +776,6 @@ class WorkspaceIDE(QMainWindow):
         if isinstance(current_widget, CodeEditor):
             current_widget.selectAll()
 
-    # def undo_current(self):
-        # """Undo in current editor"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # current_widget.undo()
-
-    # def redo_current(self):
-        # """Redo in current editor"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # current_widget.redo()
-
-    # def cut_current(self):
-        # """Cut in current editor"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # current_widget.cut()
-
-    # def copy_current(self):
-        # """Copy in current editor"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # current_widget.copy()
-
-    # def paste_current(self):
-        # """Paste in current editor"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # current_widget.paste()
-
-    # def select_all_current(self):
-        # """Select all in current editor"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # current_widget.selectAll()
-
-    # def toggle_comment(self):
-        # """Toggle comments in current editor"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # current_widget.toggle_comment()
-
-    # def duplicate_line(self):
-        # """Duplicate current line or selection"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # current_widget.duplicate_line_or_selection()
-
-
-
     # =====================================================================
     # View Operations
     # =====================================================================
@@ -923,24 +802,6 @@ class WorkspaceIDE(QMainWindow):
                 int(total * 0.55),
                 int(total * 0.30)
             ])
-
-    # def toggle_ollama_panel(self):
-        # """Toggle Ollama chat panel visibility"""
-        # ollama_container = self.main_splitter.widget(2)
-
-        # if self.ollama_panel_visible:
-            # ollama_container.hide()
-            # self.ollama_panel_visible = False
-        # else:
-            # ollama_container.show()
-            # self.ollama_panel_visible = True
-            # sizes = self.main_splitter.sizes()
-            # total = sum(sizes)
-            # self.main_splitter.setSizes([
-                # int(total * 0.15),
-                # int(total * 0.55),
-                # int(total * 0.30)
-            # ])
 
     def show_ollama_panel(self):
         """Show Ollama panel if hidden"""
@@ -986,35 +847,6 @@ class WorkspaceIDE(QMainWindow):
             )
             current_widget.setTextCursor(cursor)
             current_widget.ensureCursorVisible()
-
-    # def go_to_line(self):
-        # """Go to line dialog"""
-        # from PyQt6.QtWidgets import QInputDialog
-        # from PyQt6.QtGui import QTextCursor
-
-        # current_widget = self.tabs.currentWidget()
-        # if not isinstance(current_widget, CodeEditor):
-            # return
-
-        # line_number, ok = QInputDialog.getInt(
-            # self,
-            # "Go to Line",
-            # "Enter line number:",
-            # 1,
-            # 1,
-            # current_widget.blockCount()
-        # )
-
-        # if ok:
-            # cursor = current_widget.textCursor()
-            # cursor.movePosition(QTextCursor.MoveOperation.Start)
-            # cursor.movePosition(
-                # QTextCursor.MoveOperation.Down,
-                # QTextCursor.MoveMode.MoveAnchor,
-                # line_number - 1
-            # )
-            # current_widget.setTextCursor(cursor)
-            # current_widget.ensureCursorVisible()
 
     # =====================================================================
     # Run Operations
@@ -1172,50 +1004,6 @@ class WorkspaceIDE(QMainWindow):
             self.status_message.setText(f"Sent {len(text_to_send)} characters to Ollama")
             QTimer.singleShot(3000, lambda: self.status_message.setText(""))
 
-    # def send_to_ollama(self):
-        # """Send current editor content to Ollama"""
-        # from PyQt6.QtWidgets import QInputDialog, QLineEdit
-
-        # current_widget = self.tabs.currentWidget()
-
-        # if not isinstance(current_widget, CodeEditor):
-            # QMessageBox.warning(
-                # self,
-                # "No Editor",
-                # "Please open a file first before sending to Ollama."
-            # )
-            # return
-
-        # cursor = current_widget.textCursor()
-        # if cursor.hasSelection():
-            # text_to_send = cursor.selectedText().replace('\u2029', '\n')
-            # text_type = "selected text"
-        # else:
-            # text_to_send = current_widget.toPlainText()
-            # text_type = "entire file"
-
-        # if not text_to_send.strip():
-            # QMessageBox.warning(
-                # self,
-                # "No Text",
-                # "No text to send. Please select some text or make sure the file has content."
-            # )
-            # return
-
-        # prompt, ok = QInputDialog.getText(
-            # self,
-            # "Send to Ollama",
-            # f"Enter your instruction for Ollama:\n(Sending {text_type}, {len(text_to_send)} characters)",
-            # QLineEdit.EchoMode.Normal,
-            # "Explain this code:"
-        # )
-
-        # if ok and prompt.strip():
-            # full_message = f"{prompt}\n\n```\n{text_to_send}\n```"
-            # self.ollama_widget.send_text_message(full_message)
-            # self.show_ollama_panel()
-            # self.status_message.setText(f"Sent {len(text_to_send)} characters to Ollama")
-            # QTimer.singleShot(3000, lambda: self.status_message.setText(""))
 
     # =====================================================================
     # Settings & Dialogs
@@ -1260,17 +1048,6 @@ class WorkspaceIDE(QMainWindow):
                 "Settings Applied",
                 "Settings have been applied immediately to all open editors."
             )
-
-
-    # def apply_settings(self):
-        # """Apply current settings"""
-        # editor_font_size = self.settings_manager.get('editor_font_size', 11)
-        # for i in range(self.tabs.count()):
-            # editor = self.tabs.widget(i)
-            # if isinstance(editor, CodeEditor):
-                # font = editor.font()
-                # font.setPointSize(editor_font_size)
-                # editor.setFont(font)
 
     # REMOVE or UPDATE the old apply_settings method:
     def apply_settings(self):
