@@ -263,23 +263,52 @@ class WorkspaceIDE(QMainWindow):
         self.main_splitter.addWidget(editor_container)
 
 
-
     def _create_right_sidebar(self):
-        """Create right sidebar with Ollama chat"""
+        """Create right sidebar with Ollama chat and Outline"""
+        from PyQt6.QtWidgets import QTabWidget
+        
+        # Create tab widget for right sidebar
+        right_tabs = QTabWidget()
+        right_tabs.setMinimumWidth(300)
+        
+        # Outline tab
+        from ide.core.OutlineWidget import OutlineWidget
+        self.outline_widget = OutlineWidget(parent=self)
+        right_tabs.addTab(self.outline_widget, "📋 Outline")
+        
+        # Ollama/AI tab
         self.ollama_widget = OllamaChatWidget(parent=self)
-        self.ollama_widget.setMinimumWidth(300)
-
+        
         ollama_container = QWidget()
         ollama_layout = QVBoxLayout(ollama_container)
         ollama_layout.setContentsMargins(5, 5, 5, 5)
         ollama_layout.setSpacing(5)
-
+        
         ollama_header = QLabel("🤖 AI (Local)")
         ollama_header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
         ollama_layout.addWidget(ollama_header)
         ollama_layout.addWidget(self.ollama_widget)
+        
+        right_tabs.addTab(ollama_container, "🤖 AI")
+        
+        self.main_splitter.addWidget(right_tabs)
 
-        self.main_splitter.addWidget(ollama_container)
+    # def _create_right_sidebar(self):
+        # """Create right sidebar with Ollama chat"""
+        # self.ollama_widget = OllamaChatWidget(parent=self)
+        # self.ollama_widget.setMinimumWidth(300)
+
+        # ollama_container = QWidget()
+        # ollama_layout = QVBoxLayout(ollama_container)
+        # ollama_layout.setContentsMargins(5, 5, 5, 5)
+        # ollama_layout.setSpacing(5)
+
+        # ollama_header = QLabel("🤖 AI (Local)")
+        # ollama_header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
+        # ollama_layout.addWidget(ollama_header)
+        # ollama_layout.addWidget(self.ollama_widget)
+
+        # self.main_splitter.addWidget(ollama_container)
 
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts"""
@@ -458,14 +487,28 @@ class WorkspaceIDE(QMainWindow):
             active_group = self.split_manager.get_active_group()
             editor = active_group.get_current_editor()
             
-            # DEBUG: Print which editor we got
-            if isinstance(editor, CodeEditor):
-                print(f"[DEBUG] Active group: {self.split_manager.active_group_id}")
-                print(f"[DEBUG] Editor file: {editor.file_path}")
+            # Update outline when editor changes
+            if hasattr(self, 'outline_widget') and isinstance(editor, CodeEditor):
+                self.outline_widget.set_editor(editor)
             
             return editor
         else:
             return self.tabs.currentWidget()
+
+    # def get_current_editor(self):
+        # """Get the current editor from the active split group"""
+        # if hasattr(self, 'split_manager'):
+            # active_group = self.split_manager.get_active_group()
+            # editor = active_group.get_current_editor()
+            
+            # # DEBUG: Print which editor we got
+            # if isinstance(editor, CodeEditor):
+                # print(f"[DEBUG] Active group: {self.split_manager.active_group_id}")
+                # print(f"[DEBUG] Editor file: {editor.file_path}")
+            
+            # return editor
+        # else:
+            # return self.tabs.currentWidget()
 
     # def get_current_editor(self):
         # """
@@ -653,6 +696,11 @@ class WorkspaceIDE(QMainWindow):
                 editor.cursorPositionChanged.connect(
                     lambda: self.statusbar_manager.update_cursor_position(editor)
                 )
+
+                # ADD THIS: Update outline when tab changes
+                if hasattr(self, 'outline_widget'):
+                    self.outline_widget.set_editor(editor)
+
 
     def on_editor_modified(self, editor):
         """Handle editor modification"""
@@ -859,14 +907,14 @@ class WorkspaceIDE(QMainWindow):
         explorer_widget.setVisible(not explorer_widget.isVisible())
 
     def toggle_ollama_panel(self):
-        """Toggle Ollama chat panel visibility"""
-        ollama_container = self.main_splitter.widget(2)
-
+        """Toggle right sidebar (Ollama + Outline) visibility"""
+        right_sidebar = self.main_splitter.widget(2)
+    
         if self.ollama_panel_visible:
-            ollama_container.hide()
+            right_sidebar.hide()
             self.ollama_panel_visible = False
         else:
-            ollama_container.show()
+            right_sidebar.show()
             self.ollama_panel_visible = True
             sizes = self.main_splitter.sizes()
             total = sum(sizes)
@@ -876,10 +924,35 @@ class WorkspaceIDE(QMainWindow):
                 int(total * 0.30)
             ])
 
+    # def toggle_ollama_panel(self):
+        # """Toggle Ollama chat panel visibility"""
+        # ollama_container = self.main_splitter.widget(2)
+
+        # if self.ollama_panel_visible:
+            # ollama_container.hide()
+            # self.ollama_panel_visible = False
+        # else:
+            # ollama_container.show()
+            # self.ollama_panel_visible = True
+            # sizes = self.main_splitter.sizes()
+            # total = sum(sizes)
+            # self.main_splitter.setSizes([
+                # int(total * 0.15),
+                # int(total * 0.55),
+                # int(total * 0.30)
+            # ])
+
     def show_ollama_panel(self):
         """Show Ollama panel if hidden"""
         if not self.ollama_panel_visible:
             self.toggle_ollama_panel()
+
+
+    def update_outline_for_active_editor(self):
+        """Update outline when active editor changes in split view"""
+        current_widget = self.get_current_editor()
+        if isinstance(current_widget, CodeEditor) and hasattr(self, 'outline_widget'):
+            self.outline_widget.set_editor(current_widget)
 
     # =====================================================================
     # Navigation
