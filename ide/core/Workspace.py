@@ -38,7 +38,7 @@ from ide.core.managers.MenuManager import MenuManager
 from ide.core.managers.RecentFilesManager import RecentFilesManager
 from ide.core.DragDropTreeView import DragDropTreeView
 
-class WorkspaceIDE(QMainWindow):
+class Workspace(QMainWindow):
     """
     WorkspaceIDE - Main orchestrator class
 
@@ -156,46 +156,46 @@ class WorkspaceIDE(QMainWindow):
         """Create left sidebar with file explorer and projects"""
         left_tabs = QTabWidget()
         left_tabs.setMaximumWidth(450)
-    
+
         # File Explorer
         explorer_widget = QWidget()
         explorer_layout = QVBoxLayout(explorer_widget)
         explorer_layout.setContentsMargins(5, 5, 5, 5)
-    
+
         explorer_label = QLabel("File Explorer")
         explorer_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         explorer_layout.addWidget(explorer_label)
-    
+
         self.file_model = QFileSystemModel()
         self.file_model.setRootPath(str(self.workspace_path))
-    
+
         # Create tree view
         from ide.core.DragDropTreeView import DragDropTreeView
         self.tree = DragDropTreeView()
         self.tree.setModel(self.file_model)
         self.tree.setRootIndex(self.file_model.index(str(self.workspace_path)))
-    
+
         # Use combined delegate (replaces both FileIconDelegate and ProjectHighlightDelegate)
         from ide.core.CombinedTreeDelegate import CombinedTreeDelegate
         self.tree_delegate = CombinedTreeDelegate(self.file_model, self.tree)
         self.tree.setItemDelegate(self.tree_delegate)
-    
+
         self.tree.setColumnWidth(0, 450)
         for i in range(1, 4):
             self.tree.setColumnHidden(i, True)
-    
+
         self.tree.doubleClicked.connect(self.open_file)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_explorer_context_menu)
-    
+
         explorer_layout.addWidget(self.tree)
         left_tabs.addTab(explorer_widget, "📁 Files")
-    
+
         # Projects Panel
         self.projects_panel = ProjectsPanel(self.workspace_path, self)
         self.projects_panel.projects_changed.connect(self.update_tree_highlighting)
         left_tabs.addTab(self.projects_panel, "📦 Projects")
-    
+
         self.main_splitter.addWidget(left_tabs)
 
     """
@@ -205,25 +205,25 @@ class WorkspaceIDE(QMainWindow):
     def handle_file_moved(self, old_path: str, new_path: str):
         """
         Handle when a file is moved - update open tabs
-        
+
         Args:
             old_path: Original file path
             new_path: New file path
         """
         from ide.core.CodeEditor import CodeEditor
-        
+
         # Find any open tabs with the old path
         for i in range(self.tabs.count()):
             editor = self.tabs.widget(i)
             if isinstance(editor, CodeEditor) and editor.file_path == old_path:
                 # Update the file path
                 editor.file_path = new_path
-                
+
                 # Update tab title
                 new_name = Path(new_path).name
                 self.tabs.setTabText(i, new_name)
                 self.tabs.setTabToolTip(i, new_path)
-                
+
                 # Show notification
                 self.status_message.setText(f"Updated tab: {new_name}")
 
@@ -233,15 +233,15 @@ class WorkspaceIDE(QMainWindow):
         editor_layout = QVBoxLayout(editor_container)
         editor_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.setSpacing(0)
-    
+
         # Find/Replace widget
         self.find_replace = FindReplaceWidget()
         editor_layout.addWidget(self.find_replace)
-    
+
         # Initialize split editor manager
         # This creates the initial editor group and returns its tab widget
         self.tabs = self.split_manager.initialize(editor_layout)
-    
+
         # Setup tab event handlers
         # These are still needed for the primary group
         self.tabs.setTabsClosable(True)
@@ -250,37 +250,37 @@ class WorkspaceIDE(QMainWindow):
         self.tabs.currentChanged.connect(self.on_editor_tab_changed)
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
-    
+
         self.main_splitter.addWidget(editor_container)
 
     def _create_right_sidebar(self):
         """Create right sidebar with Ollama chat and Outline"""
         from PyQt6.QtWidgets import QTabWidget
-        
+
         # Create tab widget for right sidebar
         right_tabs = QTabWidget()
         right_tabs.setMinimumWidth(300)
-        
+
         # Outline tab
         from ide.core.OutlineWidget import OutlineWidget
         self.outline_widget = OutlineWidget(parent=self)
         right_tabs.addTab(self.outline_widget, "📋 Outline")
-        
+
         # Ollama/AI tab
         self.ollama_widget = OllamaChatWidget(parent=self)
-        
+
         ollama_container = QWidget()
         ollama_layout = QVBoxLayout(ollama_container)
         ollama_layout.setContentsMargins(5, 5, 5, 5)
         ollama_layout.setSpacing(5)
-        
+
         ollama_header = QLabel("🤖 AI (Local)")
         ollama_header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
         ollama_layout.addWidget(ollama_header)
         ollama_layout.addWidget(self.ollama_widget)
-        
+
         right_tabs.addTab(ollama_container, "🤖 AI")
-        
+
         self.main_splitter.addWidget(right_tabs)
 
     def _setup_shortcuts(self):
@@ -301,16 +301,16 @@ class WorkspaceIDE(QMainWindow):
 
     def split_editor_vertical(self):
         self.split_manager.split_vertical()
-    
+
     def split_editor_horizontal(self):
         self.split_manager.split_horizontal()
-    
+
     def close_editor_split(self):
         self.split_manager.close_split()
-    
+
     def move_tab_to_split(self):
         self.split_manager.move_tab_to_other_group()
-    
+
     def focus_other_split(self):
         self.split_manager.focus_other_group()
 
@@ -319,7 +319,7 @@ class WorkspaceIDE(QMainWindow):
         # Get the active group's current editor
         active_group = self.split_manager.get_active_group()
         current_editor = active_group.get_current_editor()
-        
+
         if isinstance(current_editor, CodeEditor) and current_editor.file_path:
             self.split_manager.open_file_in_split(current_editor.file_path)
         else:
@@ -387,7 +387,7 @@ class WorkspaceIDE(QMainWindow):
     # =====================================================================
     # File Operations
     # =====================================================================
-    
+
     def save_current_file(self):
         """Save current file"""
         current_widget = self.get_current_editor()
@@ -414,7 +414,7 @@ class WorkspaceIDE(QMainWindow):
                         editor.document().setModified(False)
                         self.on_editor_modified(editor)
                         saved_count += 1
-            
+
             if saved_count > 0:
                 self.status_message.setText(f"Saved {saved_count} file(s)")
                 QTimer.singleShot(3000, lambda: self.status_message.setText(""))
@@ -435,17 +435,17 @@ class WorkspaceIDE(QMainWindow):
     # =====================================================================
     # Helper Methods
     # =====================================================================
-    
+
     def get_current_editor(self):
         """Get the current editor from the active split group"""
         if hasattr(self, 'split_manager'):
             active_group = self.split_manager.get_active_group()
             editor = active_group.get_current_editor()
-            
+
             # Update outline when editor changes
             if hasattr(self, 'outline_widget') and isinstance(editor, CodeEditor):
                 self.outline_widget.set_editor(editor)
-            
+
             return editor
         else:
             return self.tabs.currentWidget()
@@ -698,7 +698,7 @@ class WorkspaceIDE(QMainWindow):
     # =====================================================================
     # Find/Replace Operations
     # =====================================================================
-    
+
     def show_find_replace(self):
         """Show find/replace widget"""
         current_widget = self.get_current_editor()
@@ -727,49 +727,49 @@ class WorkspaceIDE(QMainWindow):
     # =====================================================================
     # Edit Operations
     # =====================================================================
-    
+
     def toggle_comment(self):
         """Toggle comments in current editor"""
         current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.toggle_comment()
-    
+
     def duplicate_line(self):
         """Duplicate current line or selection"""
         current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.duplicate_line_or_selection()
-    
+
     def undo_current(self):
         """Undo in current editor"""
         current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.undo()
-    
+
     def redo_current(self):
         """Redo in current editor"""
         current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.redo()
-    
+
     def cut_current(self):
         """Cut in current editor"""
         current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.cut()
-    
+
     def copy_current(self):
         """Copy in current editor"""
         current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.copy()
-    
+
     def paste_current(self):
         """Paste in current editor"""
         current_widget = self.get_current_editor()
         if isinstance(current_widget, CodeEditor):
             current_widget.paste()
-    
+
     def select_all_current(self):
         """Select all in current editor"""
         current_widget = self.get_current_editor()
@@ -788,7 +788,7 @@ class WorkspaceIDE(QMainWindow):
     def toggle_ollama_panel(self):
         """Toggle right sidebar (Ollama + Outline) visibility"""
         right_sidebar = self.main_splitter.widget(2)
-    
+
         if self.ollama_panel_visible:
             right_sidebar.hide()
             self.ollama_panel_visible = False
@@ -823,11 +823,11 @@ class WorkspaceIDE(QMainWindow):
         """Go to line dialog"""
         from PyQt6.QtWidgets import QInputDialog
         from PyQt6.QtGui import QTextCursor
-    
+
         current_widget = self.get_current_editor()
         if not isinstance(current_widget, CodeEditor):
             return
-    
+
         line_number, ok = QInputDialog.getInt(
             self,
             "Go to Line",
@@ -836,7 +836,7 @@ class WorkspaceIDE(QMainWindow):
             1,
             current_widget.blockCount()
         )
-    
+
         if ok:
             cursor = current_widget.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.Start)
@@ -856,14 +856,14 @@ class WorkspaceIDE(QMainWindow):
         """Run the current file"""
         import subprocess
         import webbrowser
-    
+
         current_widget = self.get_current_editor()
         if not isinstance(current_widget, CodeEditor) or not current_widget.file_path:
             QMessageBox.warning(self, "No File", "No file open to run")
             return
-    
+
         file_path = Path(current_widget.file_path).resolve()
-    
+
         # Determine command based on file type
         command_map = {
             '.py': f'python3 "{file_path}"',
@@ -873,15 +873,15 @@ class WorkspaceIDE(QMainWindow):
             '.mjs': f'node "{file_path}"',
             '.sh': f'bash "{file_path}"'
         }
-    
+
         if file_path.suffix in {'.html', '.htm'}:
             webbrowser.open(file_path.as_uri())
             self.status_message.setText(f"Opened {file_path.name} in browser")
             QTimer.singleShot(3000, lambda: self.status_message.setText(""))
             return
-    
+
         command = command_map.get(file_path.suffix)
-    
+
         if command is None:
             QMessageBox.information(
                 self,
@@ -890,9 +890,9 @@ class WorkspaceIDE(QMainWindow):
                 f"You can run it manually in a terminal:\n\n{file_path}"
             )
             return
-    
+
         self.open_external_terminal(str(file_path.parent), command)
-    
+
         if command:
             self.status_message.setText(f"Running {file_path.name}...")
             QTimer.singleShot(4000, lambda: self.status_message.setText(""))
@@ -963,7 +963,7 @@ class WorkspaceIDE(QMainWindow):
     def send_to_ollama(self):
         """Send current editor content to Ollama"""
         from PyQt6.QtWidgets import QInputDialog, QLineEdit
-    
+
         current_widget = self.get_current_editor()
         if not isinstance(current_widget, CodeEditor):
             QMessageBox.warning(
@@ -972,7 +972,7 @@ class WorkspaceIDE(QMainWindow):
                 "Please open a file first before sending to Ollama."
             )
             return
-    
+
         cursor = current_widget.textCursor()
         if cursor.hasSelection():
             text_to_send = cursor.selectedText().replace('\u2029', '\n')
@@ -980,7 +980,7 @@ class WorkspaceIDE(QMainWindow):
         else:
             text_to_send = current_widget.toPlainText()
             text_type = "entire file"
-    
+
         if not text_to_send.strip():
             QMessageBox.warning(
                 self,
@@ -988,7 +988,7 @@ class WorkspaceIDE(QMainWindow):
                 "No text to send. Please select some text or make sure the file has content."
             )
             return
-    
+
         prompt, ok = QInputDialog.getText(
             self,
             "Send to Ollama",
@@ -996,7 +996,7 @@ class WorkspaceIDE(QMainWindow):
             QLineEdit.EchoMode.Normal,
             "Explain this code:"
         )
-    
+
         if ok and prompt.strip():
             full_message = f"{prompt}\n\n```\n{text_to_send}\n```"
             self.ollama_widget.send_text_message(full_message)
@@ -1358,24 +1358,3 @@ class WorkspaceIDE(QMainWindow):
 
         event.accept()
 
-
-# ============================================================================
-# main.py (Entry Point)
-# ============================================================================
-
-def main():
-    """Application entry point"""
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-
-    ide = WorkspaceIDE()
-    ide.show()
-
-    # Delay initial layout application
-    QTimer.singleShot(100, ide.apply_initial_layout)
-
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()

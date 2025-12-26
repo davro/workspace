@@ -4,7 +4,7 @@ set -e
 # ----------------------------
 # Configuration
 # ----------------------------
-FILENAME="${1:-workspace.py}"
+FILENAME="${1:-ide.py}"
 ACTION="$2"
 WORKSPACE_ENV="workspace-env"
 
