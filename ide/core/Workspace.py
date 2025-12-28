@@ -1,4 +1,4 @@
- # ============================================================================
+# ============================================================================
 # workspace_ide.py (Refactored Main Class)
 # ============================================================================
 
@@ -28,6 +28,9 @@ from ide.core.ProjectsPanel import ProjectsPanel
 from ide.core.PluginManagerUI import PluginManagerUI
 from ide.core.CodeEditor import CodeEditor
 
+from ide.core.Plugin import PluginManager
+from ide.core.PluginAPI import PluginAPI
+
 # Import ide core managers classes
 from ide.core.managers.FileManager import FileManager
 from ide.core.managers.TabManager import TabManager
@@ -37,6 +40,7 @@ from ide.core.managers.SettingsManager import SettingsManager
 from ide.core.managers.MenuManager import MenuManager
 from ide.core.managers.RecentFilesManager import RecentFilesManager
 from ide.core.DragDropTreeView import DragDropTreeView
+
 
 class Workspace(QMainWindow):
     """
@@ -67,9 +71,17 @@ class Workspace(QMainWindow):
         # Initialize managers
         self.settings_manager = SettingsManager(self.config_file)
 
-        # ADD THIS - Initialize split manager
+        # Initialize split manager
         from ide.core.managers.SplitEditorManager import SplitEditorManager
         self.split_manager = SplitEditorManager(self)
+
+        # ===== Initialize Plugin System =====
+        # Create Plugin API first (plugins need this to interact with IDE)
+        self.plugin_api = PluginAPI(self)
+
+        # Create Plugin Manager (manages plugin files on disk)
+        self.plugin_manager = PluginManager(self.workspace_path, self.plugin_api)
+        # ===== END PLUGIN SYSTEM INITIALIZATION =====
 
         # Build UI first
         self.init_ui()
@@ -145,12 +157,16 @@ class Workspace(QMainWindow):
         # Setup keyboard shortcuts
         self._setup_shortcuts()
 
-        # Plugin UI
-        self.plugin_ui = PluginManagerUI(self)
+        # ===== UPDATE THIS LINE: Pass both plugin_manager AND plugin_api =====
+        # OLD: self.plugin_ui = PluginManagerUI(self)
+        # NEW:
+        self.plugin_ui = PluginManagerUI(self, self.plugin_manager, self.plugin_api)
+        # ===== END UPDATE =====
 
         # Hide Ollama panel by default
         self.ollama_panel_visible = False
         self.main_splitter.widget(2).hide()
+
 
     def _create_left_sidebar(self):
         """Create left sidebar with file explorer and projects"""
@@ -200,7 +216,6 @@ class Workspace(QMainWindow):
 
     """
     TEST Optional: Update TabManager to handle file moves
-    Add this to workspace.py or TabManager.py
     """
     def handle_file_moved(self, old_path: str, new_path: str):
         """
@@ -330,7 +345,6 @@ class Workspace(QMainWindow):
                 "No file is currently open to split."
             )
 
-    # Add this new method:
     def cycle_tabs_backward(self):
         """Cycle backwards through tabs in recent order (no popup)"""
         if self.tabs.count() < 2:
@@ -388,6 +402,10 @@ class Workspace(QMainWindow):
     # File Operations
     # =====================================================================
 
+    # =====================================================================
+    # Update save_current_file to trigger hook
+    # =====================================================================
+
     def save_current_file(self):
         """Save current file"""
         current_widget = self.get_current_editor()
@@ -397,6 +415,12 @@ class Workspace(QMainWindow):
                 self.on_editor_modified(current_widget)
                 self.status_message.setText("File saved")
                 QTimer.singleShot(2000, lambda: self.status_message.setText(""))
+
+                # ===== Trigger plugin hook =====
+                if hasattr(current_widget, 'file_path') and current_widget.file_path:
+                    self.trigger_file_saved(current_widget.file_path)
+                # ===== END HOOK TRIGGER =====
+
 
     # def save_all_files(self):
         # """Save all modified files"""
@@ -601,6 +625,10 @@ class Workspace(QMainWindow):
     # Editor Event Handlers
     # =====================================================================
 
+    # =====================================================================
+    # open_file to trigger hook
+    # =====================================================================
+
     def open_file(self, index):
         """Open file from tree view double-click"""
         path = self.file_model.filePath(index)
@@ -611,10 +639,18 @@ class Workspace(QMainWindow):
                 self.settings_manager.settings
             )
 
+            # ===== Trigger plugin hook =====
+            self.trigger_file_opened(str(p))
+            # ===== END HOOK TRIGGER =====
+
+
+    # =====================================================================
+    # Update on_editor_tab_changed to trigger hooks
+    # =====================================================================
+
     def on_editor_tab_changed(self, index):
         """Handle tab change"""
         if index >= 0:
-
             # Track tab access
             self.tab_order_manager.record_access(index)
 
@@ -622,13 +658,34 @@ class Workspace(QMainWindow):
             if isinstance(editor, CodeEditor):
                 self.find_replace.set_editor(editor)
                 self.statusbar_manager.update_file_info(editor)
+
+                # Connect cursor position updates
                 editor.cursorPositionChanged.connect(
                     lambda: self.statusbar_manager.update_cursor_position(editor)
                 )
 
-                # ADD THIS: Update outline when tab changes
+                # ===== Connect cursor hook =====
+                editor.cursorPositionChanged.connect(
+                    lambda: self._on_cursor_position_changed(editor)
+                )
+                # ===== END HOOK CONNECTION =====
+
+                # Update outline when tab changes
                 if hasattr(self, 'outline_widget'):
                     self.outline_widget.set_editor(editor)
+
+                # ===== Trigger focus hook =====
+                self.trigger_editor_focus(editor)
+                # ===== END HOOK TRIGGER =====
+
+
+    def _on_cursor_position_changed(self, editor):
+        """Handle cursor position change"""
+        if isinstance(editor, CodeEditor):
+            cursor = editor.textCursor()
+            line = cursor.blockNumber() + 1
+            column = cursor.columnNumber() + 1
+            self.trigger_cursor_moved(editor, line, column)
 
 
     def on_editor_modified(self, editor):
@@ -636,6 +693,7 @@ class Workspace(QMainWindow):
         index = self.tabs.indexOf(editor)
         if index != -1:
             self.tabs.set_tab_modified(index, editor.document().isModified())
+
 
     # =====================================================================
     # Quick Open
@@ -1312,18 +1370,66 @@ class Workspace(QMainWindow):
         #else:
             # print(f"[DEBUG] Dialog rejected/cancelled")
 
+
+    # ============================================================================
+    # Optional: Add hook trigger methods to Workspace class
+    # These allow the IDE to notify plugins about events
+    # ============================================================================
+
+    def trigger_file_saved(self, file_path: str):
+        """Trigger file saved hook"""
+        if hasattr(self, 'plugin_api'):
+            self.plugin_api.trigger_hook('on_file_saved', file_path)
+
+    def trigger_file_opened(self, file_path: str):
+        """Trigger file opened hook"""
+        if hasattr(self, 'plugin_api'):
+            self.plugin_api.trigger_hook('on_file_opened', file_path)
+
+    def trigger_file_closed(self, file_path: str):
+        """Trigger file closed hook"""
+        if hasattr(self, 'plugin_api'):
+            self.plugin_api.trigger_hook('on_file_closed', file_path)
+
+    def trigger_editor_focus(self, editor):
+        """Trigger editor focus hook"""
+        if hasattr(self, 'plugin_api'):
+            self.plugin_api.trigger_hook('on_editor_focus', editor)
+
+    def trigger_cursor_moved(self, editor, line: int, column: int):
+        """Trigger cursor moved hook"""
+        if hasattr(self, 'plugin_api'):
+            self.plugin_api.trigger_hook('on_cursor_moved', editor, line, column)
+
+
+
     # =====================================================================
     # Application Lifecycle
     # =====================================================================
 
     def closeEvent(self, event):
         """Handle application close"""
+
+        # ===== Trigger workspace closing hook =====
+        if hasattr(self, 'plugin_api'):
+            self.plugin_api.trigger_hook('on_workspace_closed')
+        # ===== END HOOK TRIGGER =====
+
         # Save active projects
         self.settings_manager.set(
             'active_projects',
             self.projects_panel.get_active_projects()
         )
         self.settings_manager.save()
+
+
+        # # Save active projects
+        # self.settings_manager.set(
+            # 'active_projects',
+            # self.projects_panel.get_active_projects()
+        # )
+        # self.settings_manager.save()
+
 
         # Save session if enabled
         if self.settings_manager.get('restore_session', True):
