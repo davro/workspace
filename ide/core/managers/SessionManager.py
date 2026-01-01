@@ -137,5 +137,3 @@ class SessionManager:
         except Exception as e:
             print(f"Error restoring session: {e}")
             return False
-
-

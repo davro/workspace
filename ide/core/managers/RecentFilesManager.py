@@ -202,5 +202,3 @@ class RecentFilesManager:
         if reply == QMessageBox.StandardButton.Yes:
             self.clear_recent_files()
             # Menu will be recreated next time it's shown
-
-

@@ -97,7 +97,7 @@ class OutlineWidget(QWidget):
                 border-radius: 3px;
             }
             QTreeWidget::item {
-                padding: 4px;
+                padding: 3px;
                 border-radius: 2px;
             }
             QTreeWidget::item:hover {

@@ -41,7 +41,7 @@ update_packages() {
 banner() {
   echo "################################################################################"
   echo "#"
-  echo "# Workspace IDE ($FILENAME)"
+  echo "# Workspace ($FILENAME)"
   echo "# Python venv: $WORKSPACE_ENV"
   echo "# David Stevens <mail.davro@gmail.com>"
   echo "#"

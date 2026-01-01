@@ -18,6 +18,8 @@ from PyQt6.QtCore import Qt, QTimer
 
 # Import ide core classes
 from ide import VERSION, WORKSPACE_PATH
+from ide.core.Plugin import PluginManager
+from ide.core.PluginAPI import PluginAPI
 from ide.core.FindReplace import FindReplaceWidget
 from ide.core.QuickOpen import QuickOpenDialog
 from ide.core.Settings import SettingsDialog
@@ -28,8 +30,6 @@ from ide.core.ProjectsPanel import ProjectsPanel
 from ide.core.PluginManagerUI import PluginManagerUI
 from ide.core.CodeEditor import CodeEditor
 
-from ide.core.Plugin import PluginManager
-from ide.core.PluginAPI import PluginAPI
 
 # Import ide core managers classes
 from ide.core.managers.FileManager import FileManager
@@ -60,8 +60,11 @@ class Workspace(QMainWindow):
 
         # Initialize paths
         self.workspace_path = Path.home() / WORKSPACE_PATH
-        self.config_file = self.workspace_path / ".workspace_ide_config.json"
-        self.session_file = self.workspace_path / ".workspace_ide_session.json"
+        self.config_file    = self.workspace_path / ".workspace_ide_config.json"
+        self.session_file   = self.workspace_path / ".workspace_ide_session.json"
+        # TODO move to .workspace directory
+        # self.config_file    = self.workspace_path / ".workspace/ide_config.json"
+        # self.session_file   = self.workspace_path / ".workspace/ide_session.json"
 
         # Quick open cache
         self.quick_open_cache = []
@@ -71,17 +74,22 @@ class Workspace(QMainWindow):
         # Initialize managers
         self.settings_manager = SettingsManager(self.config_file)
 
+        # ===== Initialize Plugin System =====
+        # Create Plugin API first (plugins need this to interact with IDE)
+        self.plugin_api = PluginAPI(self)
+        # print (f"{self.plugin_api._plugins}")
+
+        # Create Plugin Manager (manages plugin files on disk)
+        self.plugin_manager = PluginManager(self.workspace_path, self.plugin_api)
+        # self.plugin_manager.scan_plugins()
+
+        # ===== END PLUGIN SYSTEM INITIALIZATION =====
+
         # Initialize split manager
         from ide.core.managers.SplitEditorManager import SplitEditorManager
         self.split_manager = SplitEditorManager(self)
 
-        # ===== Initialize Plugin System =====
-        # Create Plugin API first (plugins need this to interact with IDE)
-        self.plugin_api = PluginAPI(self)
 
-        # Create Plugin Manager (manages plugin files on disk)
-        self.plugin_manager = PluginManager(self.workspace_path, self.plugin_api)
-        # ===== END PLUGIN SYSTEM INITIALIZATION =====
 
         # Build UI first
         self.init_ui()
@@ -106,6 +114,10 @@ class Workspace(QMainWindow):
 
         # Setup menus
         self._create_menus()
+
+        # Create plugin toolbar AFTER menus
+        self.menu_manager.create_plugin_toolbar(self.plugin_manager, self.plugin_ui)
+        
 
         # Initialize workspace
         self.ensure_workspace()
@@ -154,14 +166,16 @@ class Workspace(QMainWindow):
         self.main_splitter.setStretchFactor(1, 4)  # Center
         self.main_splitter.setStretchFactor(2, 0)  # Right (hidden)
 
-        # Setup keyboard shortcuts
-        self._setup_shortcuts()
+
 
         # ===== UPDATE THIS LINE: Pass both plugin_manager AND plugin_api =====
         # OLD: self.plugin_ui = PluginManagerUI(self)
         # NEW:
         self.plugin_ui = PluginManagerUI(self, self.plugin_manager, self.plugin_api)
         # ===== END UPDATE =====
+
+        # Setup keyboard shortcuts
+        self._setup_shortcuts()
 
         # Hide Ollama panel by default
         self.ollama_panel_visible = False
@@ -261,7 +275,10 @@ class Workspace(QMainWindow):
         # These are still needed for the primary group
         self.tabs.setTabsClosable(True)
         self.tabs.setMovable(True)
-        self.tabs.tabCloseRequested.connect(lambda idx: self.tab_manager.close_tab(idx))
+
+        # BUG CLOSES MUTIPLE TABS AFTER TAB CLOSE
+        #self.tabs.tabCloseRequested.connect(lambda idx: self.tab_manager.close_tab(idx)) 
+
         self.tabs.currentChanged.connect(self.on_editor_tab_changed)
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
@@ -300,6 +317,8 @@ class Workspace(QMainWindow):
 
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts"""
+        # from ide.plugins.Codeintelligence import show_symbol_search
+        # ("Ctrl+T", show_symbol_search),
         shortcuts = [
             ("Ctrl+Shift+O", self.send_to_ollama),
             ("F3", self.find_next),
@@ -308,6 +327,7 @@ class Workspace(QMainWindow):
             ("Ctrl+Tab", self.show_tab_switcher),
             # Quick cycle backwards (no popup)
             ("Ctrl+Shift+Tab", self.cycle_tabs_backward),
+
         ]
 
         for key, callback in shortcuts:
@@ -1463,4 +1483,3 @@ class Workspace(QMainWindow):
                 return
 
         event.accept()
-

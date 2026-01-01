@@ -67,4 +67,3 @@ class TabOrderManager:
     def clear(self):
         """Clear all tracking"""
         self.access_order.clear()
-

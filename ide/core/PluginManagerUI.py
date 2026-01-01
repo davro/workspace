@@ -1,10 +1,8 @@
-# ============================================================================
-# PluginManagerUI.py - Updated to use PluginAPI
-# ============================================================================
+# ide/core/PluginManagerUI.py - Updated for pure class-based plugins
 
 """
 Plugin Manager UI - Handles plugin discovery and loading
-Updated to properly pass PluginAPI to plugins
+Pure class-based plugins only
 """
 
 from PyQt6.QtWidgets import (
@@ -28,11 +26,11 @@ class PluginManagerUI:
         Args:
             workspace_ide: Main workspace IDE instance
             plugin_manager: PluginManager instance
-            plugin_api: PluginAPI instance (this is what plugins need!)
+            plugin_api: PluginAPI instance
         """
         self.workspace = workspace_ide
         self.plugin_manager = plugin_manager
-        self.plugin_api = plugin_api  # Store the API to pass to plugins
+        self.plugin_api = plugin_api
         self.loaded_plugin_tabs = {}
     
     def create_plugin_menu(self, menubar):
@@ -42,6 +40,13 @@ class PluginManagerUI:
         # Browse plugins action
         browse_action = plugins_menu.addAction("📦 Browse Plugins...")
         browse_action.triggered.connect(self.show_plugin_browser)
+        
+        plugins_menu.addSeparator()
+        
+        # Reload all plugins (for development)
+        reload_all_action = plugins_menu.addAction("🔄 Reload All Plugins")
+        reload_all_action.triggered.connect(self.reload_all_plugins)
+        reload_all_action.setToolTip("Hot reload all background plugins (for development)")
         
         plugins_menu.addSeparator()
         
@@ -57,13 +62,18 @@ class PluginManagerUI:
         
         plugins = self.plugin_manager.scan_plugins()
         
-        if not plugins:
-            no_plugins = self.plugins_submenu.addAction("(No plugins found)")
+        # Filter to only show plugins with UI
+        ui_plugins = [p for p in plugins if p.get('has_ui', True)]
+        
+        if not ui_plugins:
+            no_plugins = self.plugins_submenu.addAction("(No plugin panels)")
             no_plugins.setEnabled(False)
             return
         
-        for plugin_info in plugins:
-            action = self.plugins_submenu.addAction(plugin_info['name'])
+        for plugin_info in ui_plugins:
+            # Show status if plugin is running in background
+            status = " ✓" if plugin_info.get('run_on_startup', False) else ""
+            action = self.plugins_submenu.addAction(f"{plugin_info['name']}{status}")
             action.triggered.connect(
                 lambda checked, p=plugin_info: self.open_plugin(p)
             )
@@ -93,13 +103,12 @@ class PluginManagerUI:
                 return
         
         try:
-            # Load the plugin module
-            plugin_module = self.plugin_manager.load_plugin(plugin_file)
+            # Load or get the plugin instance
+            plugin_instance = self.plugin_manager.load_plugin(plugin_file)
             
-            # Create plugin widget - PASS plugin_api HERE!
+            # Create plugin widget wrapper - PASS INSTANCE ONLY!
             plugin_widget = PluginWidget(
-                plugin_module, 
-                self.plugin_api,  # This is the key fix!
+                plugin_instance,  # Just the instance!
                 parent=self.workspace.tabs
             )
             
@@ -124,6 +133,134 @@ class PluginManagerUI:
                 "Plugin Load Error",
                 f"Failed to load plugin '{plugin_name}':\n\n{str(e)}"
             )
+
+    def reload_all_plugins(self):
+        """Reload all background plugins"""
+        from PyQt6.QtWidgets import QMessageBox
+        
+        plugins = self.plugin_manager.scan_plugins()
+        background_plugins = [p for p in plugins if p.get('run_on_startup', False)]
+        
+        if not background_plugins:
+            QMessageBox.information(
+                self.workspace,
+                "No Background Plugins",
+                "No background plugins to reload."
+            )
+            return
+        
+        success_count = 0
+        failed = []
+        
+        for plugin_info in background_plugins:
+            try:
+                print(f"[PluginManagerUI] Reloading {plugin_info['name']}...")
+                
+                # Close tabs - use the toolbar's method which is now fixed
+                if hasattr(self.workspace.menu_manager, 'plugin_toolbar'):
+                    toolbar = self.workspace.menu_manager.plugin_toolbar
+                    toolbar._close_plugin_tabs(plugin_info['file'])
+                
+                # Unload
+                self.plugin_manager.unload_plugin(plugin_info['file'])
+                
+                # Clear cache
+                import sys
+                module_name = plugin_info['file'].stem
+                modules_to_remove = [k for k in sys.modules.keys() 
+                                    if k == module_name or k.startswith(f"{module_name}.")]
+                for key in modules_to_remove:
+                    del sys.modules[key]
+                
+                # Reload
+                self.plugin_manager.load_plugin(plugin_info['file'])
+                
+                success_count += 1
+                
+            except Exception as e:
+                import traceback
+                print(f"[PluginManagerUI] Failed to reload {plugin_info['name']}:")
+                traceback.print_exc()
+                failed.append((plugin_info['name'], str(e)))
+        
+        # Refresh toolbar
+        if hasattr(self.workspace.menu_manager, 'plugin_toolbar'):
+            self.workspace.menu_manager.plugin_toolbar.refresh_plugins()
+        
+        # Show results
+        if failed:
+            msg = f"Reloaded {success_count} plugin(s)\n\nFailed:\n"
+            msg += "\n".join(f"• {name}: {err}" for name, err in failed)
+            QMessageBox.warning(self.workspace, "Reload Complete (with errors)", msg)
+        else:
+            msg = f"✓ Successfully reloaded {success_count} plugin(s)"
+            QMessageBox.information(self.workspace, "Reload Complete", msg)
+            self.workspace.status_message.setText(msg)
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(3000, lambda: self.workspace.status_message.setText(""))
+
+    # def reload_all_plugins(self):
+        # """Reload all background plugins"""
+        # from PyQt6.QtWidgets import QMessageBox
+        
+        # plugins = self.plugin_manager.scan_plugins()
+        # background_plugins = [p for p in plugins if p.get('run_on_startup', False)]
+        
+        # if not background_plugins:
+            # QMessageBox.information(
+                # self.workspace,
+                # "No Background Plugins",
+                # "No background plugins to reload."
+            # )
+            # return
+        
+        # success_count = 0
+        # failed = []
+        
+        # for plugin_info in background_plugins:
+            # try:
+                # print(f"[PluginManagerUI] Reloading {plugin_info['name']}...")
+                
+                # # Close tabs
+                # if hasattr(self.workspace.menu_manager, 'plugin_toolbar'):
+                    # toolbar = self.workspace.menu_manager.plugin_toolbar
+                    # toolbar._close_plugin_tabs(plugin_info['file'])
+                
+                # # Unload
+                # self.plugin_manager.unload_plugin(plugin_info['file'])
+                
+                # # Clear cache
+                # import sys
+                # module_name = plugin_info['file'].stem
+                # modules_to_remove = [k for k in sys.modules.keys() 
+                                    # if k == module_name or k.startswith(f"{module_name}.")]
+                # for key in modules_to_remove:
+                    # del sys.modules[key]
+                
+                # # Reload
+                # self.plugin_manager.load_plugin(plugin_info['file'])
+                
+                # success_count += 1
+                
+            # except Exception as e:
+                # print(f"[PluginManagerUI] Failed to reload {plugin_info['name']}: {e}")
+                # failed.append((plugin_info['name'], str(e)))
+        
+        # # Refresh toolbar
+        # if hasattr(self.workspace.menu_manager, 'plugin_toolbar'):
+            # self.workspace.menu_manager.plugin_toolbar.refresh_plugins()
+        
+        # # Show results
+        # if failed:
+            # msg = f"Reloaded {success_count} plugin(s)\n\nFailed:\n"
+            # msg += "\n".join(f"• {name}: {err}" for name, err in failed)
+            # QMessageBox.warning(self.workspace, "Reload Complete (with errors)", msg)
+        # else:
+            # msg = f"✓ Successfully reloaded {success_count} plugin(s)"
+            # QMessageBox.information(self.workspace, "Reload Complete", msg)
+            # self.workspace.status_message.setText(msg)
+            # from PyQt6.QtCore import QTimer
+            # QTimer.singleShot(3000, lambda: self.workspace.status_message.setText(""))
 
 
 class PluginBrowserDialog(QDialog):
@@ -204,8 +341,8 @@ class PluginBrowserDialog(QDialog):
         if not plugins:
             self.details_text.setText("No plugins found.\n\nTo create a plugin:\n"
                                      "1. Create a .py file in ide/plugins/\n"
-                                     "2. Define PLUGIN_NAME and get_widget() function\n"
-                                     "3. Optionally define initialize(api) for API access")
+                                     "2. Define a class with PLUGIN_NAME attribute\n"
+                                     "3. Implement __init__, initialize, get_widget, cleanup")
             return
         
         for plugin_info in plugins:
@@ -228,18 +365,27 @@ class PluginBrowserDialog(QDialog):
         
         plugin_info = current.data(Qt.ItemDataRole.UserRole)
         
+        # Build status info
+        status_parts = []
+        if plugin_info.get('run_on_startup', False):
+            status_parts.append("✓ Running in background")
+        if plugin_info.get('has_ui', True):
+            status_parts.append("📋 Has control panel")
+        
+        status_html = "<br>".join(status_parts) if status_parts else "Inactive"
+        
         details = f"""
 <h3>{plugin_info['name']}</h3>
 
 <p><b>Version:</b> {plugin_info['version']}</p>
+<p><b>Status:</b> {status_html}</p>
 <p><b>File:</b> {plugin_info['file'].name}</p>
-<p><b>Path:</b> {plugin_info['file']}</p>
 
 <h4>Description:</h4>
 <p>{plugin_info.get('description', 'No description available')}</p>
 
 <h4>Usage:</h4>
-<p>Click "Open Plugin" to load this plugin in a new tab.</p>
+<p>Click "Open Plugin" to show the control panel in a new tab.</p>
 """
         
         self.details_text.setHtml(details)
@@ -254,130 +400,3 @@ class PluginBrowserDialog(QDialog):
         self.plugin_ui.open_plugin(plugin_info)
         self.accept()
 
-
-
-
-# import platform
-# import subprocess
-
-# from PyQt6.QtWidgets import QMessageBox, QMenu
-# from PyQt6.QtCore import QTimer, Qt
-
-# from ide.core.Plugin import PluginWidget, PluginManager
-
-
-# class PluginManagerUI:
-    # """Handles all plugin-related menu and actions for the IDE"""
-
-    # def __init__(self, ide):
-        # self.ide = ide
-        # self.plugin_manager = PluginManager(ide.workspace_path)
-
-    # def create_plugin_menu(self, menubar):
-        # plugins_menu = menubar.addMenu("Plugins")
-        # self.rebuild_plugin_menu(plugins_menu)
-        # return plugins_menu
-
-    # def rebuild_plugin_menu(self, plugins_menu):
-        # plugins_menu.clear()
-        # available_plugins = self.plugin_manager.scan_plugins()
-
-        # if not available_plugins:
-            # no_plugins_action = plugins_menu.addAction("No plugins found")
-            # no_plugins_action.setEnabled(False)
-            # plugins_menu.addSeparator()
-        # else:
-            # for plugin_info in available_plugins:
-                # action = plugins_menu.addAction(f"🔌 {plugin_info['name']}")
-                # action.triggered.connect(
-                    # lambda checked, p=plugin_info: self.open_plugin(p)
-                # )
-            # plugins_menu.addSeparator()
-
-        # refresh_action = plugins_menu.addAction("🔄 Refresh Plugin List")
-        # refresh_action.triggered.connect(lambda: self.rebuild_plugin_menu(plugins_menu))
-
-        # plugins_menu.addSeparator()
-
-        # open_folder_action = plugins_menu.addAction("📁 Open Plugins Folder")
-        # open_folder_action.triggered.connect(self.open_plugins_folder)
-
-        # plugins_menu.addSeparator()
-
-        # help_action = plugins_menu.addAction("❓ Plugin Development Guide")
-        # help_action.triggered.connect(self.show_plugin_help)
-
-    # def open_plugin(self, plugin_info):
-        # try:
-            # plugin_name = plugin_info['name']
-            # # Prevent duplicate tabs
-            # for i in range(self.ide.tabs.count()):
-                # widget = self.ide.tabs.widget(i)
-                # if isinstance(widget, PluginWidget) and widget.plugin_name == plugin_name:
-                    # self.ide.tabs.setCurrentIndex(i)
-                    # self.ide.status_message.setText(f"Plugin '{plugin_name}' already open")
-                    # QTimer.singleShot(2000, lambda: self.ide.status_message.setText(""))
-                    # return
-
-            # plugin_module = self.plugin_manager.load_plugin(plugin_info['file'])
-            # plugin_widget = PluginWidget(plugin_module, self.ide)
-
-            # tab_index = self.ide.tabs.addTab(plugin_widget, f"🔌 {plugin_name}")
-            # self.ide.tabs.setTabToolTip(tab_index, f"{plugin_name} v{plugin_info['version']}")
-            # self.ide.tabs.setCurrentIndex(tab_index)
-
-            # self.ide.status_message.setText(f"Loaded plugin: {plugin_name}")
-            # QTimer.singleShot(3000, lambda: self.ide.status_message.setText(""))
-
-        # except Exception as e:
-            # QMessageBox.critical(
-                # self.ide,
-                # "Plugin Load Error",
-                # f"Failed to load plugin '{plugin_info['name']}':\n\n{str(e)}"
-            # )
-
-    # def open_plugins_folder(self):
-        # plugins_dir = self.plugin_manager.plugins_dir
-        # try:
-            # if platform.system() == 'Darwin':
-                # subprocess.run(['open', str(plugins_dir)])
-            # elif platform.system() == 'Windows':
-                # subprocess.run(['explorer', str(plugins_dir)])
-            # else:
-                # subprocess.run(['xdg-open', str(plugins_dir)])
-        # except Exception:
-            # QMessageBox.information(
-                # self.ide,
-                # "Plugins Folder",
-                # f"Plugins folder location:\n\n{plugins_dir}"
-            # )
-
-    # def show_plugin_help(self):
-        # help_text = """
-# <h3>🔌 Plugin Development Guide</h3>
-# <h4>Plugin Structure</h4>
-# <p>Plugins are Python files placed in the <code>workspace/plugins</code> directory.</p>
-# <h4>Minimum Required Components</h4>
-# <pre><code>PLUGIN_NAME = "My Plugin"
-# PLUGIN_VERSION = "1.0.0"
-
-# def get_widget(parent=None):
-    # '''Returns a QWidget to display'''
-    # widget = QWidget(parent)
-    # # Build your UI here
-    # return widget
-# </code></pre>
-# <h4>Example Plugin</h4>
-# <p>Check out <code>example_plugin.py</code> in your plugins folder for a complete example.</p>
-# <h4>Tips</h4>
-# <ul>
-# <li>Refresh the plugin list after creating new plugins</li>
-# <li>Plugin tabs can be closed like any other tab</li>
-# <li>You can open multiple instances of the same plugin</li>
-# </ul>
-# """
-        # msg = QMessageBox(self.ide)
-        # msg.setWindowTitle("Plugin Development Guide")
-        # msg.setTextFormat(Qt.TextFormat.RichText)
-        # msg.setText(help_text)
-        # msg.exec()

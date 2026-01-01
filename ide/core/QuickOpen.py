@@ -201,4 +201,3 @@ class QuickOpenDialog(QDialog):
         else:
             self.search_input.keyPressEvent(event)
             self.search_input.setFocus()
-

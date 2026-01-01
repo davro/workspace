@@ -4,6 +4,7 @@
 
 from PyQt6.QtWidgets import QMenu
 from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt
 
 
 class MenuManager:
@@ -14,6 +15,32 @@ class MenuManager:
         self.parent = parent
         self.menus = {}
         self.actions = {}
+        self.plugin_toolbar = None  # ← NEW
+
+    def create_plugin_toolbar(self, plugin_manager, plugin_ui):
+        """
+        Create and add plugin toolbar to menu bar
+        
+        Args:
+            plugin_manager: PluginManager instance
+            plugin_ui: PluginManagerUI instance
+        """
+        from ide.core.PluginToolbar import PluginToolbar
+        
+        self.plugin_toolbar = PluginToolbar(plugin_manager, plugin_ui, self.parent)
+        
+        # Add as a widget to the right corner of menu bar
+        self.menubar.setCornerWidget(self.plugin_toolbar, Qt.Corner.TopRightCorner)
+        
+        # Refresh plugins
+        self.plugin_toolbar.refresh_plugins()
+        
+        return self.plugin_toolbar
+    
+    def refresh_plugin_toolbar(self):
+        """Refresh the plugin toolbar"""
+        if self.plugin_toolbar:
+            self.plugin_toolbar.refresh_plugins()
 
     def create_file_menu(self):
         """Create File menu"""

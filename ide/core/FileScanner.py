@@ -58,4 +58,3 @@ class FileScannerThread(QThread):
 
         files.sort()
         self.files_found.emit(files)
-

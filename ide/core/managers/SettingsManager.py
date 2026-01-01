@@ -66,5 +66,3 @@ class SettingsManager:
     def update(self, new_settings):
         """Update multiple settings at once"""
         self.settings.update(new_settings)
-
-

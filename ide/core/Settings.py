@@ -154,4 +154,3 @@ class SettingsDialog(QDialog):
         )
 
         self.tab_switcher_mru.setChecked(settings.get('tab_switcher_mru', True))
-

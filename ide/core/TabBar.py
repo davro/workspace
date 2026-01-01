@@ -55,20 +55,33 @@ class StyledTabBar(QTabBar):
             }
         """)
 
-    def mousePressEvent(self, event):
-        """Handle mouse press events - close tab on middle click"""
+    # def mousePressEvent(self, event):
+        # """Handle mouse press events - close tab on middle click"""
+        # if event.button() == Qt.MouseButton.MiddleButton:
+            # # Get the tab index at the click position
+            # tab_index = self.tabAt(event.pos())
+            
+            # if tab_index >= 0:
+                # # Emit the tabCloseRequested signal
+                # self.tabCloseRequested.emit(tab_index)
+                # event.accept()
+                # return
+        
+        # # Let the default handler process other mouse buttons
+        # super().mousePressEvent(event)
+
+
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release events - close tab on middle click"""
         if event.button() == Qt.MouseButton.MiddleButton:
-            # Get the tab index at the click position
             tab_index = self.tabAt(event.pos())
             
             if tab_index >= 0:
-                # Emit the tabCloseRequested signal
                 self.tabCloseRequested.emit(tab_index)
                 event.accept()
                 return
         
-        # Let the default handler process other mouse buttons
-        super().mousePressEvent(event)
+        super().mouseReleaseEvent(event)
 
     def set_tab_modified(self, index, modified):
         """Mark a tab as modified or unmodified"""

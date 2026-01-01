@@ -29,8 +29,8 @@ class FindReplaceWidget(QFrame):
 
         # Set size policy to prevent expansion
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMaximumHeight(100)
-        self.setMinimumHeight(100)
+        self.setMaximumHeight(110)  # ← Increased from 100
+        self.setMinimumHeight(110)  # ← Increased from 100
 
         self.setStyleSheet("""
             QFrame {
@@ -41,8 +41,10 @@ class FindReplaceWidget(QFrame):
                 background-color: #3C3F41;
                 color: #CCC;
                 border: 1px solid #555;
-                padding: 3px;
+                padding: 5px;
                 border-radius: 2px;
+                font-size: 13px;  /* ← Increased from 12px */
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;  /* ← Added monospace font */
             }
             QLineEdit:focus {
                 border: 1px solid #4A9EFF;
@@ -53,6 +55,7 @@ class FindReplaceWidget(QFrame):
                 border: 1px solid #555;
                 padding: 3px 8px;
                 border-radius: 2px;
+                font-size: 12px;  /* ← Added explicit size */
             }
             QPushButton:hover {
                 background-color: #4A4A4A;
@@ -62,18 +65,22 @@ class FindReplaceWidget(QFrame):
             }
             QCheckBox {
                 color: #CCC;
+                font-size: 12px;  /* ← Added explicit size */
+            }
+            QLabel {
+                font-size: 12px;  /* ← Added for match label */
             }
         """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(3)
+        layout.setSpacing(5)  # ← Increased from 3
 
         # Find row
         find_row = QHBoxLayout()
         self.find_input = QLineEdit()
         self.find_input.setPlaceholderText("Find")
-        self.find_input.setFixedHeight(24)
+        self.find_input.setFixedHeight(28)  # ← Increased from 24
         self.find_input.textChanged.connect(self.on_find_text_changed)
         self.find_input.returnPressed.connect(self.find_next)
         find_row.addWidget(self.find_input)
@@ -85,13 +92,13 @@ class FindReplaceWidget(QFrame):
 
         prev_btn = QPushButton("↑")
         prev_btn.setToolTip("Previous (Shift+F3)")
-        prev_btn.setFixedSize(24, 24)
+        prev_btn.setFixedSize(28, 28)  # ← Increased from 24
         prev_btn.clicked.connect(self.find_previous)
         find_row.addWidget(prev_btn)
 
         next_btn = QPushButton("↓")
         next_btn.setToolTip("Next (F3)")
-        next_btn.setFixedSize(24, 24)
+        next_btn.setFixedSize(28, 28)  # ← Increased from 24
         next_btn.clicked.connect(self.find_next)
         find_row.addWidget(next_btn)
 
@@ -101,17 +108,17 @@ class FindReplaceWidget(QFrame):
         replace_row = QHBoxLayout()
         self.replace_input = QLineEdit()
         self.replace_input.setPlaceholderText("Replace")
-        self.replace_input.setFixedHeight(24)
+        self.replace_input.setFixedHeight(28)  # ← Increased from 24
         self.replace_input.returnPressed.connect(self.replace_current)
         replace_row.addWidget(self.replace_input)
 
         replace_btn = QPushButton("Replace")
-        replace_btn.setFixedHeight(24)
+        replace_btn.setFixedHeight(28)  # ← Increased from 24
         replace_btn.clicked.connect(self.replace_current)
         replace_row.addWidget(replace_btn)
 
         replace_all_btn = QPushButton("Replace All")
-        replace_all_btn.setFixedHeight(24)
+        replace_all_btn.setFixedHeight(28)  # ← Increased from 24
         replace_all_btn.clicked.connect(self.replace_all)
         replace_row.addWidget(replace_all_btn)
 
@@ -138,7 +145,7 @@ class FindReplaceWidget(QFrame):
         options_row.addStretch()
 
         close_btn = QPushButton("✖")
-        close_btn.setFixedSize(24, 24)
+        close_btn.setFixedSize(28, 28)  # ← Increased from 24
         close_btn.clicked.connect(self.hide)
         options_row.addWidget(close_btn)
 
