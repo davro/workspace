@@ -23,7 +23,6 @@ from ide.core.PluginAPI import PluginAPI
 from ide.core.FindReplace import FindReplaceWidget
 from ide.core.QuickOpen import QuickOpenDialog
 from ide.core.Settings import SettingsDialog
-from ide.core.Ollama import OllamaChatWidget
 from ide.core.Document import DocumentDialog
 from ide.core.TabBar import StyledTabWidget
 from ide.core.ProjectsPanel import ProjectsPanel
@@ -62,9 +61,6 @@ class Workspace(QMainWindow):
         self.workspace_path = Path.home() / WORKSPACE_PATH
         self.config_file    = self.workspace_path / ".workspace_ide_config.json"
         self.session_file   = self.workspace_path / ".workspace_ide_session.json"
-        # TODO move to .workspace directory
-        # self.config_file    = self.workspace_path / ".workspace/ide_config.json"
-        # self.session_file   = self.workspace_path / ".workspace/ide_session.json"
 
         # Quick open cache
         self.quick_open_cache = []
@@ -117,7 +113,6 @@ class Workspace(QMainWindow):
 
         # Create plugin toolbar AFTER menus
         self.menu_manager.create_plugin_toolbar(self.plugin_manager, self.plugin_ui)
-        
 
         # Initialize workspace
         self.ensure_workspace()
@@ -152,13 +147,9 @@ class Workspace(QMainWindow):
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(self.main_splitter)
 
-        # LEFT SIDEBAR - Files & Projects
+        # LEFT SIDEBAR - EDITOR - LEFT SIDEBAR
         self._create_left_sidebar()
-
-        # CENTER - Editor
         self._create_editor_area()
-
-        # RIGHT SIDEBAR - Ollama Chat
         self._create_right_sidebar()
 
         # Set initial splitter proportions
@@ -166,21 +157,13 @@ class Workspace(QMainWindow):
         self.main_splitter.setStretchFactor(1, 4)  # Center
         self.main_splitter.setStretchFactor(2, 0)  # Right (hidden)
 
-
-
-        # ===== UPDATE THIS LINE: Pass both plugin_manager AND plugin_api =====
-        # OLD: self.plugin_ui = PluginManagerUI(self)
-        # NEW:
+        # PluginManagerUI Pass both plugin_manager AND plugin_api
         self.plugin_ui = PluginManagerUI(self, self.plugin_manager, self.plugin_api)
-        # ===== END UPDATE =====
 
         # Setup keyboard shortcuts
         self._setup_shortcuts()
 
-        # Hide Ollama panel by default
-        self.ollama_panel_visible = False
         self.main_splitter.widget(2).hide()
-
 
     def _create_left_sidebar(self):
         """Create left sidebar with file explorer and projects"""
@@ -285,49 +268,34 @@ class Workspace(QMainWindow):
 
         self.main_splitter.addWidget(editor_container)
 
-    def _create_right_sidebar(self):
-        """Create right sidebar with Ollama chat and Outline"""
-        from PyQt6.QtWidgets import QTabWidget
 
+
+    def _create_right_sidebar(self):
+        """Create right sidebar with Outline (AI moved to plugin)"""
+        from PyQt6.QtWidgets import QTabWidget
+    
         # Create tab widget for right sidebar
         right_tabs = QTabWidget()
         right_tabs.setMinimumWidth(300)
-
+    
         # Outline tab
         from ide.core.OutlineWidget import OutlineWidget
         self.outline_widget = OutlineWidget(parent=self)
         right_tabs.addTab(self.outline_widget, "📋 Outline")
 
-        # Ollama/AI tab
-        self.ollama_widget = OllamaChatWidget(parent=self)
-
-        ollama_container = QWidget()
-        ollama_layout = QVBoxLayout(ollama_container)
-        ollama_layout.setContentsMargins(5, 5, 5, 5)
-        ollama_layout.setSpacing(5)
-
-        ollama_header = QLabel("🤖 AI (Local)")
-        ollama_header.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
-        ollama_layout.addWidget(ollama_header)
-        ollama_layout.addWidget(self.ollama_widget)
-
-        right_tabs.addTab(ollama_container, "🤖 AI")
-
         self.main_splitter.addWidget(right_tabs)
+        
+        # Store reference for plugins to use
+        self.right_sidebar = right_tabs
 
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts"""
-        # from ide.plugins.Codeintelligence import show_symbol_search
-        # ("Ctrl+T", show_symbol_search),
+
         shortcuts = [
-            ("Ctrl+Shift+O", self.send_to_ollama),
             ("F3", self.find_next),
             ("Shift+F3", self.find_previous),
-            # Tab switcher with popup
             ("Ctrl+Tab", self.show_tab_switcher),
-            # Quick cycle backwards (no popup)
             ("Ctrl+Shift+Tab", self.cycle_tabs_backward),
-
         ]
 
         for key, callback in shortcuts:
@@ -392,7 +360,12 @@ class Workspace(QMainWindow):
         selection_menu = self.menuBar().addMenu("Selection")
         self.menu_manager._add_action(selection_menu, "Select All", "Ctrl+A", self.select_all_current)
 
-        self.menu_manager.create_view_menu()
+        # self.menu_manager.create_view_menu()
+        # Create View menu manually (without Ollama)
+        view_menu = self.menuBar().addMenu("View")
+        self.menu_manager._add_action(view_menu, "Toggle Explorer", "Ctrl+B", self.toggle_explorer)
+        # Note: Toggle AI Panel is now handled by OllamaPlugin via Ctrl+L
+
         self.menu_manager.create_go_menu()
         self.menu_manager.create_run_menu()
 
@@ -605,15 +578,13 @@ class Workspace(QMainWindow):
 
         menu = QMenu(self)
 
-        ai_menu = menu.addMenu("🤖 AI Actions")
-        send_all_action = ai_menu.addAction("Send Entire File to Ollama")
-        send_selection_action = ai_menu.addAction("Send Selection to Ollama")
-
-        menu.addSeparator()
+        # ai_menu = menu.addMenu("🤖 AI Actions")
+        # send_all_action = ai_menu.addAction("Send Entire File to Ollama")
+        # send_selection_action = ai_menu.addAction("Send Selection to Ollama")
+        # menu.addSeparator()
 
         copy_path_action = menu.addAction("📋 Copy File Path")
         copy_relative_path_action = menu.addAction("📋 Copy Relative Path")
-
         menu.addSeparator()
 
         save_action = menu.addAction("💾 Save")
@@ -628,10 +599,10 @@ class Workspace(QMainWindow):
             self.copy_file_path_to_clipboard(editor.file_path, relative=False)
         elif action == copy_relative_path_action:
             self.copy_file_path_to_clipboard(editor.file_path, relative=True)
-        elif action == send_all_action:
-            self.tab_manager.send_tab_to_ollama(tab_index, send_all=True)
-        elif action == send_selection_action:
-            self.tab_manager.send_tab_to_ollama(tab_index, send_all=False)
+        # elif action == send_all_action:
+            # self.tab_manager.send_tab_to_ollama(tab_index, send_all=True)
+        # elif action == send_selection_action:
+            # self.tab_manager.send_tab_to_ollama(tab_index, send_all=False)
         elif action == save_action:
             self.tab_manager.save_tab(tab_index)
         elif action == close_action:
@@ -784,13 +755,6 @@ class Workspace(QMainWindow):
             self.find_replace.set_editor(current_widget)
             self.find_replace.show_find()
 
-    # def show_find_replace(self):
-        # """Show find/replace widget"""
-        # current_widget = self.tabs.currentWidget()
-        # if isinstance(current_widget, CodeEditor):
-            # self.find_replace.set_editor(current_widget)
-            # self.find_replace.show_find()
-
     def find_next(self):
         """Find next occurrence"""
         if self.find_replace.isVisible():
@@ -863,16 +827,20 @@ class Workspace(QMainWindow):
         explorer_widget = self.main_splitter.widget(0)
         explorer_widget.setVisible(not explorer_widget.isVisible())
 
-    def toggle_ollama_panel(self):
-        """Toggle right sidebar (Ollama + Outline) visibility"""
-        right_sidebar = self.main_splitter.widget(2)
+    # def show_ollama_panel(self):
+        # """Show Ollama panel if hidden"""
+        # if not self.ollama_panel_visible:
+            # self.toggle_ollama_panel()
 
-        if self.ollama_panel_visible:
+    def toggle_right_sidebar(self):
+        """Toggle right sidebar visibility"""
+        right_sidebar = self.main_splitter.widget(2)
+        
+        if right_sidebar.isVisible():
             right_sidebar.hide()
-            self.ollama_panel_visible = False
         else:
             right_sidebar.show()
-            self.ollama_panel_visible = True
+            # Adjust sizes
             sizes = self.main_splitter.sizes()
             total = sum(sizes)
             self.main_splitter.setSizes([
@@ -880,12 +848,6 @@ class Workspace(QMainWindow):
                 int(total * 0.55),
                 int(total * 0.30)
             ])
-
-    def show_ollama_panel(self):
-        """Show Ollama panel if hidden"""
-        if not self.ollama_panel_visible:
-            self.toggle_ollama_panel()
-
 
     def update_outline_for_active_editor(self):
         """Update outline when active editor changes in split view"""
@@ -1034,53 +996,6 @@ class Workspace(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open terminal: {str(e)}")
 
-    # =====================================================================
-    # Ollama Integration
-    # =====================================================================
-
-    def send_to_ollama(self):
-        """Send current editor content to Ollama"""
-        from PyQt6.QtWidgets import QInputDialog, QLineEdit
-
-        current_widget = self.get_current_editor()
-        if not isinstance(current_widget, CodeEditor):
-            QMessageBox.warning(
-                self,
-                "No Editor",
-                "Please open a file first before sending to Ollama."
-            )
-            return
-
-        cursor = current_widget.textCursor()
-        if cursor.hasSelection():
-            text_to_send = cursor.selectedText().replace('\u2029', '\n')
-            text_type = "selected text"
-        else:
-            text_to_send = current_widget.toPlainText()
-            text_type = "entire file"
-
-        if not text_to_send.strip():
-            QMessageBox.warning(
-                self,
-                "No Text",
-                "No text to send. Please select some text or make sure the file has content."
-            )
-            return
-
-        prompt, ok = QInputDialog.getText(
-            self,
-            "Send to Ollama",
-            f"Enter your instruction for Ollama:\n(Sending {text_type}, {len(text_to_send)} characters)",
-            QLineEdit.EchoMode.Normal,
-            "Explain this code:"
-        )
-
-        if ok and prompt.strip():
-            full_message = f"{prompt}\n\n```\n{text_to_send}\n```"
-            self.ollama_widget.send_text_message(full_message)
-            self.show_ollama_panel()
-            self.status_message.setText(f"Sent {len(text_to_send)} characters to Ollama")
-            QTimer.singleShot(3000, lambda: self.status_message.setText(""))
 
 
     # =====================================================================

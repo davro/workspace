@@ -572,6 +572,339 @@ class PluginAPI:
 
 
 
+    # ============================================================================
+    # BONUS: Useful helper methods for plugins
+    # ============================================================================
+    
+    def get_main_window(self):
+        """
+        Get reference to main IDE window
+        
+        Returns:
+            Workspace: Main IDE window instance
+        """
+        return self.ide
+    
+    
+    def get_current_editor(self):
+        """
+        Get the currently active editor
+        
+        Returns:
+            CodeEditor or None: Current editor widget
+        """
+        if hasattr(self.ide, 'get_current_editor'):
+            return self.ide.get_current_editor()
+        return None
+    
+    
+    def get_workspace_path(self):
+        """
+        Get workspace root path
+        
+        Returns:
+            Path: Workspace directory path
+        """
+        if hasattr(self.ide, 'workspace_path'):
+            return self.ide.workspace_path
+        return None
+    
+    
+    def get_settings(self):
+        """
+        Get IDE settings dictionary
+        
+        Returns:
+            dict: Current IDE settings
+        """
+        if hasattr(self.ide, 'settings_manager'):
+            return self.ide.settings_manager.settings
+        return {}
+    
+    
+    def show_status_message(self, message: str, timeout: int = 2000):
+        """
+        Show message in status bar
+        
+        Args:
+            message: Message to display
+            timeout: How long to show (milliseconds)
+        """
+        if hasattr(self.ide, 'status_message'):
+            self.ide.status_message.setText(message)
+            
+            if timeout > 0:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(timeout, lambda: self.ide.status_message.setText(""))
+    
+    
+    def register_keyboard_shortcut(self, key_sequence: str, callback, description: str = ""):
+        """
+        Register a keyboard shortcut
+        
+        Args:
+            key_sequence: Key combination (e.g., "Ctrl+Shift+X")
+            callback: Function to call when triggered
+            description: Description for documentation
+        
+        Returns:
+            bool: True if registered successfully
+        
+        Example:
+            >>> api.register_keyboard_shortcut(
+            ...     "Ctrl+Shift+X",
+            ...     self.my_action,
+            ...     "My Plugin Action"
+            ... )
+        """
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        
+        try:
+            # Create a safe wrapper that catches exceptions
+            def safe_callback():
+                try:
+                    callback()
+                except Exception as e:
+                    print(f"[Shortcut Error] {key_sequence}: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Create and store shortcut
+            shortcut = QShortcut(QKeySequence(key_sequence), self.ide)
+            shortcut.activated.connect(safe_callback)
+            
+            # Store reference to prevent garbage collection
+            self._shortcuts[key_sequence] = shortcut
+            
+            print(f"[PluginAPI] Registered shortcut: {key_sequence} - {description}")
+            return True
+            
+        except Exception as e:
+            print(f"[PluginAPI] Failed to register shortcut {key_sequence}: {e}")
+            return False
+
+
+
+        
+    # ============================================================================
+    # ADD THESE METHODS TO PluginAPI CLASS
+    # ============================================================================
+    
+    def add_to_right_sidebar(self, widget, title: str, icon: str = "") -> bool:
+        """
+        Add a plugin widget to the right sidebar
+        
+        Args:
+            widget: QWidget to add as a tab
+            title: Tab title
+            icon: Optional emoji/icon prefix
+        
+        Returns:
+            bool: True if added successfully
+        
+        Example:
+            >>> widget = MyPluginWidget()
+            >>> api.add_to_right_sidebar(widget, "My Tool", "🔧")
+        """
+        if hasattr(self.ide, 'right_sidebar'):
+            tab_title = f"{icon} {title}" if icon else title
+            index = self.ide.right_sidebar.addTab(widget, tab_title)
+            return True
+        
+        print(f"[PluginAPI] Warning: right_sidebar not found in IDE")
+        return False
+    
+    
+    def remove_from_right_sidebar(self, widget) -> bool:
+        """
+        Remove a plugin widget from the right sidebar
+        
+        Args:
+            widget: The widget to remove
+        
+        Returns:
+            bool: True if removed successfully
+        """
+        if hasattr(self.ide, 'right_sidebar'):
+            sidebar = self.ide.right_sidebar
+            
+            # Find the tab index
+            for i in range(sidebar.count()):
+                if sidebar.widget(i) == widget:
+                    sidebar.removeTab(i)
+                    return True
+        
+        return False
+    
+    
+    def get_right_sidebar_visible(self) -> bool:
+        """
+        Check if right sidebar is visible
+        
+        Returns:
+            bool: True if visible, False otherwise
+        """
+        if hasattr(self.ide, 'main_splitter'):
+            right_sidebar = self.ide.main_splitter.widget(2)
+            return right_sidebar.isVisible() if right_sidebar else False
+        return False
+    
+    
+    def set_right_sidebar_visible(self, visible: bool):
+        """
+        Show or hide the right sidebar
+        
+        Args:
+            visible: True to show, False to hide
+        """
+        if hasattr(self.ide, 'main_splitter'):
+            # Right sidebar is widget(2) in main_splitter
+            right_sidebar = self.ide.main_splitter.widget(2)
+            
+            if right_sidebar:
+                if visible:
+                    right_sidebar.show()
+                    # Adjust splitter sizes
+                    sizes = self.ide.main_splitter.sizes()
+                    total = sum(sizes)
+                    self.ide.main_splitter.setSizes([
+                        int(total * 0.15),  # Left sidebar
+                        int(total * 0.55),  # Editor
+                        int(total * 0.30)   # Right sidebar
+                    ])
+                else:
+                    right_sidebar.hide()
+    
+    
+    def focus_right_sidebar_tab(self, title: str) -> bool:
+        """
+        Switch to a specific tab in right sidebar by title
+        
+        Args:
+            title: Tab title (or partial match)
+        
+        Returns:
+            bool: True if tab found and focused
+        
+        Example:
+            >>> api.focus_right_sidebar_tab("AI")  # Focus the AI tab
+        """
+        if hasattr(self.ide, 'right_sidebar'):
+            sidebar = self.ide.right_sidebar
+            
+            for i in range(sidebar.count()):
+                tab_text = sidebar.tabText(i)
+                if title.lower() in tab_text.lower():
+                    sidebar.setCurrentIndex(i)
+                    self.set_right_sidebar_visible(True)
+                    return True
+        
+        return False
+
+    
+    # ============================================================================
+    # OPTIONAL: Add Menu Item Support
+    # ============================================================================
+    
+    def add_menu_action(self, menu_path: str, action_name: str, callback, 
+                       shortcut: str = None) -> bool:
+        """
+        Add a menu item to IDE menus
+        
+        Args:
+            menu_path: Menu path like "View" or "Edit/Advanced"
+            action_name: Name of the action
+            callback: Function to call when triggered
+            shortcut: Optional keyboard shortcut
+        
+        Returns:
+            bool: True if added successfully
+        
+        Example:
+            >>> api.add_menu_action("View", "Toggle AI Panel", self.toggle_panel, "Ctrl+L")
+        """
+        if not hasattr(self.workspace, 'menuBar'):
+            return False
+        
+        menubar = self.workspace.menuBar()
+        
+        # Split path (e.g., "Edit/Advanced" -> ["Edit", "Advanced"])
+        parts = menu_path.split('/')
+        
+        # Find or create menu
+        current_menu = None
+        
+        # Find top-level menu
+        for action in menubar.actions():
+            if action.text() == parts[0]:
+                current_menu = action.menu()
+                break
+        
+        if not current_menu:
+            # Create new top-level menu
+            current_menu = menubar.addMenu(parts[0])
+        
+        # Navigate submenus
+        for part in parts[1:]:
+            found = False
+            for action in current_menu.actions():
+                if action.menu() and action.text() == part:
+                    current_menu = action.menu()
+                    found = True
+                    break
+            
+            if not found:
+                # Create submenu
+                current_menu = current_menu.addMenu(part)
+        
+        # Add the action
+        from PyQt6.QtGui import QAction
+        action = QAction(action_name, self.workspace)
+        action.triggered.connect(callback)
+        
+        if shortcut:
+            action.setShortcut(shortcut)
+        
+        current_menu.addAction(action)
+        
+        return True
+    
+    
+    # ============================================================================
+    # EXAMPLE: Context Menu Support (Advanced)
+    # ============================================================================
+    
+    def add_editor_context_menu_item(self, label: str, callback, condition=None):
+        """
+        Add item to editor context menu
+        
+        Args:
+            label: Menu item label
+            callback: Function called with (editor, position)
+            condition: Optional function to check if item should show
+        
+        Example:
+            >>> def my_action(editor, pos):
+            ...     print(f"Action on {editor.file_path}")
+            >>> 
+            >>> api.add_editor_context_menu_item(
+            ...     "AI: Explain Selection",
+            ...     my_action,
+            ...     condition=lambda e: e.textCursor().hasSelection()
+            ... )
+        """
+        # Store for later use
+        if not hasattr(self, '_context_menu_items'):
+            self._context_menu_items = []
+        
+        self._context_menu_items.append({
+            'label': label,
+            'callback': callback,
+            'condition': condition
+        })
+
+
+
 # ============================================================================
 # FileTreeDecoration - Result object for file tree decorators
 # ============================================================================

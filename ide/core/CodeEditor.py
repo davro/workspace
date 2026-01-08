@@ -2,11 +2,12 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QMessageBox
 from PyQt6.QtGui import (
-    QColor, 
-    QPainter, 
-    QTextFormat, 
-    QFont, 
-    QSyntaxHighlighter, 
+    QKeyEvent,
+    QColor,
+    QPainter,
+    QTextFormat,
+    QFont,
+    QSyntaxHighlighter,
     QTextCharFormat,
     QFontMetricsF,
     QTextCursor
@@ -15,25 +16,16 @@ from PyQt6.QtCore import Qt, QRect, QSize
 
 from ide.core.SyntaxHighlighter import PythonHighlighter
 
-# TEST
-class LineNumberArea(QWidget):
-    def __init__(self, editor):
-        super().__init__(editor)
-        self.editor = editor
-
-    def sizeHint(self):
-        return QSize(self.editor.line_number_area_width(), 0)
-
-    def paintEvent(self, event):
-        self.editor.line_number_area_paint_event(event)
-
-
+"""
+Main Code Editor Class
+A custom QTextEdit widget with enhanced features for code editing.
+"""
 class CodeEditor(QPlainTextEdit):
-    def __init__(self, file_path=None, font_size=11, tab_width=4, 
+    def __init__(self, file_path=None, font_size=11, tab_width=4,
                 show_line_numbers=True, gutter_width=10):
         """
         Initialize code editor
-        
+
         Args:
             file_path: Path to file to load
             font_size: Font size in points
@@ -61,7 +53,8 @@ class CodeEditor(QPlainTextEdit):
         self.highlighter = None
         self.show_line_numbers = show_line_numbers
         self.gutter_width = gutter_width
-        
+        self.tab_width = tab_width
+
         # Track extra selections separately to avoid conflicts
         self.current_line_selection = None
         self.find_replace_selections = []
@@ -87,6 +80,15 @@ class CodeEditor(QPlainTextEdit):
         if file_path:
             self.load_file(file_path)
 
+        # Connect text changed signal for plugins
+        self.textChanged.connect(self._on_text_changed)
+
+
+    def _on_text_changed(self):
+        """Notify plugins about text change"""
+        # This allows plugins to hook into typing
+        pass
+
     # ------------------------------------------------------------------
     # Line Number Area
     # ------------------------------------------------------------------
@@ -100,7 +102,7 @@ class CodeEditor(QPlainTextEdit):
         """Calculate the width needed for line numbers + gutter"""
         if not self.show_line_numbers or not self.line_number_area:
             return self.gutter_width
-        
+
         digits = len(str(max(1, self.blockCount())))
         space = 3 + self.fontMetrics().horizontalAdvance('9') * digits + self.gutter_width
         return space
@@ -109,14 +111,14 @@ class CodeEditor(QPlainTextEdit):
         """Update the line number area when the editor scrolls or updates"""
         if not self.line_number_area:
             return
-        
+
         if dy:
             self.line_number_area.scroll(0, dy)
         else:
             self.line_number_area.update(
                 0, rect.y(), self.line_number_area.width(), rect.height()
             )
-    
+
         if rect.contains(self.viewport().rect()):
             self.update_line_number_area_width(0)
 
@@ -130,7 +132,7 @@ class CodeEditor(QPlainTextEdit):
     def set_show_line_numbers(self, show):
         """Toggle line numbers display"""
         self.show_line_numbers = show
-        
+
         if show and not self.line_number_area:
             self.line_number_area = LineNumberArea(self)
             self.blockCountChanged.connect(self.update_line_number_area_width)
@@ -138,7 +140,7 @@ class CodeEditor(QPlainTextEdit):
             self.line_number_area.show()
         elif not show and self.line_number_area:
             self.line_number_area.hide()
-        
+
         self.update_line_number_area_width(0)
 
     def set_font_size(self, size):
@@ -146,13 +148,13 @@ class CodeEditor(QPlainTextEdit):
         font = self.font()
         font.setPointSize(size)
         self.setFont(font)
-        
-        tab_width = int(self.tabStopDistance() / 
+
+        tab_width = int(self.tabStopDistance() /
                        QFontMetricsF(font).horizontalAdvance(' '))
         self.setTabStopDistance(
             QFontMetricsF(font).horizontalAdvance(' ') * tab_width
         )
-        
+
         self.update_line_number_area_width(0)
         if self.line_number_area:
             self.line_number_area.update()
@@ -166,14 +168,14 @@ class CodeEditor(QPlainTextEdit):
     def resizeEvent(self, event):
         """Handle resize events to update line number area"""
         super().resizeEvent(event)
-        
+
         if not self.line_number_area:
             return
-        
+
         cr = self.contentsRect()
         digits = len(str(max(1, self.blockCount())))
         line_number_width = 3 + self.fontMetrics().horizontalAdvance('9') * digits
-        
+
         self.line_number_area.setGeometry(
             QRect(cr.left(), cr.top(), line_number_width, cr.height())
         )
@@ -216,25 +218,25 @@ class CodeEditor(QPlainTextEdit):
             self.current_line_selection = selection
         else:
             self.current_line_selection = None
-        
+
         self._update_extra_selections()
-    
+
     def set_find_replace_selections(self, selections):
         """Set find/replace selections (called by FindReplaceWidget)"""
         self.find_replace_selections = selections
         self._update_extra_selections()
-    
+
     def _update_extra_selections(self):
         """Update all extra selections (current line + find/replace)"""
         all_selections = []
-        
+
         # Add find/replace selections first (so they're under current line)
         all_selections.extend(self.find_replace_selections)
-        
+
         # Add current line selection on top
         if self.current_line_selection:
             all_selections.append(self.current_line_selection)
-        
+
         self.setExtraSelections(all_selections)
 
     # ------------------------------------------------------------------
@@ -335,14 +337,14 @@ class CodeEditor(QPlainTextEdit):
                     # Find where comment starts
                     indent = len(line_text) - len(line_text.lstrip())
                     comment_start = indent
-                    
+
                     # Remove comment prefix
                     new_text = line_text[:comment_start] + line_text[comment_start + len(comment_prefix):]
-                    
+
                     # Remove ONE space after comment if it exists
                     if new_text[comment_start:comment_start + 1] == ' ':
                         new_text = new_text[:comment_start] + new_text[comment_start + 1:]
-                    
+
                     block_cursor.insertText(new_text)
             else:
                 # Comment - add comment with space
@@ -420,11 +422,21 @@ class CodeEditor(QPlainTextEdit):
 
         cursor.endEditBlock()
 
-    def keyPressEvent(self, event):
+
+    def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Tab and not event.modifiers():
-            if self.textCursor().hasSelection():
+            cursor = self.textCursor()
+
+            if cursor.hasSelection():
                 self.indent_selection()
-                return
+            else:
+                # Use stored tab_width
+                col = cursor.columnNumber()
+                spaces_needed = self.tab_width - (col % self.tab_width)
+                cursor.insertText(' ' * spaces_needed)
+
+            return
+
         elif event.key() == Qt.Key.Key_Backtab or (
             event.key() == Qt.Key.Key_Tab and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
         ):
@@ -436,12 +448,12 @@ class CodeEditor(QPlainTextEdit):
     # ============================================================================
     # Duplicate Line
     # ============================================================================
-        
+
     def duplicate_line_or_selection(self):
         """Duplicate the current line or selected text"""
         cursor = self.textCursor()
         cursor.beginEditBlock()
-        
+
         try:
             if cursor.hasSelection():
                 self._duplicate_selection(cursor)
@@ -449,39 +461,83 @@ class CodeEditor(QPlainTextEdit):
                 self._duplicate_line(cursor)
         finally:
             cursor.endEditBlock()
-        
+
         self.setTextCursor(cursor)
-    
+
     def _duplicate_selection(self, cursor):
         """Duplicate the selected text"""
         selected_text = cursor.selectedText()
         selected_text = selected_text.replace('\u2029', '\n')
-        
+
         selection_start = cursor.selectionStart()
         selection_end = cursor.selectionEnd()
-        
+
         cursor.setPosition(selection_end)
         cursor.insertText('\n' + selected_text)
-        
+
         new_end = cursor.position()
         new_start = new_end - len(selected_text)
         cursor.setPosition(new_start)
         cursor.setPosition(new_end, cursor.MoveMode.KeepAnchor)
-    
+
     def _duplicate_line(self, cursor):
         """Duplicate the current line"""
         original_position = cursor.positionInBlock()
-        
+
         cursor.movePosition(cursor.MoveOperation.StartOfBlock)
         cursor.movePosition(cursor.MoveOperation.EndOfBlock, cursor.MoveMode.KeepAnchor)
-        
+
         line_text = cursor.selectedText()
         cursor.movePosition(cursor.MoveOperation.EndOfBlock)
         cursor.insertText('\n' + line_text)
-        
+
         cursor.movePosition(cursor.MoveOperation.StartOfBlock)
         cursor.movePosition(
             cursor.MoveOperation.Right,
             cursor.MoveMode.MoveAnchor,
             min(original_position, len(line_text))
         )
+
+
+class LineNumberArea(QWidget):
+    def __init__(self, editor):
+        """
+        Initialize the LineNumberArea with the given editor instance.
+
+        Args:
+            editor (QTextEdit or QPlainTextEdit): The main text editor widget that displays the code.  
+                This widget is used to synchronize line numbers with the content of the editor.
+
+        Notes:
+            - The `editor` is passed to the parent class constructor to establish the widget hierarchy.
+            - This method sets up the foundational configuration for line number display.
+        """
+        super().__init__(editor)
+        self.editor = editor
+
+    def sizeHint(self):
+        """
+        Returns the size hint for the LineNumberArea widget.
+
+        This method provides a suggested size for the LineNumberArea, with the width
+        determined by the editor's line number area width. The height is set to 0,
+        as the vertical size is typically managed by the parent layout or the editor's
+        content height.
+
+        Returns:
+            QSize: A size with the calculated width and 0 height.
+        """
+        return QSize(self.editor.line_number_area_width(), 0)
+
+    def paintEvent(self, event):
+        """
+        Handle the paint event for the line number area by delegating to the editor's paint method.
+
+        This method is called when the line number area needs to be repainted. It forwards the paint event
+        to the associated editor's `line_number_area_paint_event` method to ensure the line numbers
+        are correctly rendered.
+
+        :param event: The QPaintEvent containing information about the painting operation.
+        :type event: PyQt6.QtWidgets.QPaint, QPaintEvent
+        """
+        self.editor.line_number_area_paint_event(event)

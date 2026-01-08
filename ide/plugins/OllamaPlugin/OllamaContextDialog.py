@@ -1,5 +1,4 @@
 """
-Create new file: ide/core/OllamaContextDialog.py
 Dialog to preview and customize context before sending
 """
 

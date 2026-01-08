@@ -130,8 +130,12 @@ class MenuManager:
         self._add_action(split_menu, "Close Split", "Ctrl+Alt+W", self.parent.close_editor_split)
         
         menu.addSeparator()
-        self._add_action(menu, "Toggle Explorer", "Ctrl+B", self.parent.toggle_explorer)
-        self._add_action(menu, "Toggle AI Chat", "Ctrl+L", self.parent.toggle_ollama_panel)
+        # self._add_action(menu, "Toggle Explorer", "Ctrl+B", self.parent.toggle_explorer)
+        # self._add_action(menu, "Toggle AI Chat", "Ctrl+L", self.parent.toggle_ollama_panel)
+        self._add_action(view_menu, "Toggle Explorer", "Ctrl+B", 
+                                    self.workspace.toggle_explorer)
+        self._add_action(view_menu, "Toggle Right Sidebar", "Ctrl+Shift+B", 
+                                    self.workspace.toggle_right_sidebar)
     
         return menu
 
