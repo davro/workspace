@@ -54,11 +54,35 @@ class Workspace(QMainWindow):
     - MenuManager: Menu creation
     """
 
-    def __init__(self):
+    def __init__(self, workspace_path=None):
         super().__init__()
 
+        # Initialize paths - detect from CWD or use provided path
+        if workspace_path:
+            # Explicit path provided (e.g., from command line)
+            self.workspace_path = Path(workspace_path).resolve()
+        else:
+            # Auto-detect from current working directory
+            cwd = Path.cwd()
+            
+            # Check if CWD looks like a workspace directory
+            # Criteria:
+            # 1. Directory name starts with "workspace"
+            # 2. Has an 'ide' subdirectory (IDE code structure)
+            # 3. Has workspace config file (existing workspace)
+            if (cwd.name.startswith('workspace') or 
+                (cwd / 'ide').exists() or
+                (cwd / '.workspace_ide_config.json').exists()):
+                self.workspace_path = cwd
+                print(f"ℹ️  Using workspace: {cwd}")
+            else:
+                # Fall back to default ~/workspace
+                self.workspace_path = Path.home() / WORKSPACE_PATH
+                print(f"ℹ️  Using default workspace: {self.workspace_path}")
+        
+
         # Initialize paths
-        self.workspace_path = Path.home() / WORKSPACE_PATH
+        # self.workspace_path = Path.home() / WORKSPACE_PATH
         self.config_file    = self.workspace_path / ".workspace_ide_config.json"
         self.session_file   = self.workspace_path / ".workspace_ide_session.json"
 

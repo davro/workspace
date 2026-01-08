@@ -104,14 +104,14 @@ class ExamplePlugin:
         self._load_settings()
         
         # Register event hooks
-        self.api.register_hook('on_file_saved', self.on_file_saved, 
-                              plugin_id='example_plugin')
-        self.api.register_hook('on_file_opened', self.on_file_opened, 
-                              plugin_id='example_plugin')
-        self.api.register_hook('on_file_closed', self.on_file_closed, 
-                              plugin_id='example_plugin')
-        self.api.register_hook('on_editor_focus', self.on_editor_focus, 
-                              plugin_id='example_plugin')
+        # self.api.register_hook('on_file_saved', self.on_file_saved, 
+                              # plugin_id='example_plugin')
+        # self.api.register_hook('on_file_opened', self.on_file_opened, 
+                              # plugin_id='example_plugin')
+        # self.api.register_hook('on_file_closed', self.on_file_closed, 
+                              # plugin_id='example_plugin')
+        # self.api.register_hook('on_editor_focus', self.on_editor_focus, 
+                              # plugin_id='example_plugin')
         
         # Register keyboard shortcuts
         self.api.register_keyboard_shortcut(
@@ -505,79 +505,7 @@ class ExamplePluginWidget(QWidget):
         self.update_recent_files()
         
         return widget
-    
-    # def create_dashboard_tab(self):
-        # """Create dashboard tab showing workspace info"""
-        # widget = QWidget()
-        # layout = QVBoxLayout(widget)
         
-        # # ===== Statistics Group =====
-        # stats_group = QGroupBox("📊 Workspace Statistics")
-        # stats_layout = QVBoxLayout(stats_group)
-        
-        # self.stats_label = QLabel()
-        # self.stats_label.setStyleSheet("""
-            # color: #CCC; 
-            # padding: 10px;
-            # background: #2D2D2D;
-            # border-radius: 5px;
-        # """)
-        # stats_layout.addWidget(self.stats_label)
-        
-        # layout.addWidget(stats_group)
-        
-        # # ===== Active Projects Group =====
-        # projects_group = QGroupBox("📁 Active Projects")
-        # projects_layout = QVBoxLayout(projects_group)
-        
-        # self.projects_list = QListWidget()
-        # self.projects_list.setMaximumHeight(150)
-        # self.projects_list.setStyleSheet("""
-            # background: #2D2D2D;
-            # color: #CCC;
-            # border: 1px solid #555;
-        # """)
-        # projects_layout.addWidget(self.projects_list)
-        
-        # layout.addWidget(projects_group)
-        
-        # # ===== Recent Files Group =====
-        # recent_group = QGroupBox("📄 Recent Files")
-        # recent_layout = QVBoxLayout(recent_group)
-        
-        # self.recent_list = QListWidget()
-        # self.recent_list.setMaximumHeight(150)
-        # self.recent_list.setStyleSheet("""
-            # background: #2D2D2D;
-            # color: #CCC;
-            # border: 1px solid #555;
-        # """)
-        # recent_layout.addWidget(self.recent_list)
-        
-        # layout.addWidget(recent_group)
-        
-        # # ===== Action Buttons =====
-        # button_layout = QHBoxLayout()
-        
-        # refresh_btn = QPushButton("🔄 Refresh")
-        # refresh_btn.clicked.connect(self.refresh_all)
-        # button_layout.addWidget(refresh_btn)
-        
-        # test_action_btn = QPushButton("🧪 Test Action")
-        # test_action_btn.clicked.connect(self.plugin.show_example_action)
-        # button_layout.addWidget(test_action_btn)
-        
-        # layout.addLayout(button_layout)
-        
-        # layout.addStretch()
-        
-        # # Initial update
-        # self.update_stats()
-        # self.update_projects()
-        # self.update_recent_files()
-        
-        # return widget
-    
     def create_log_tab(self):
         """Create activity log tab"""
         widget = QWidget()
