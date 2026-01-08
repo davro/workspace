@@ -64,8 +64,9 @@ class Workspace(QMainWindow):
         # Criteria:
 
         self.workspace_path = Path.home() / WORKSPACE_PATH
-        self.workspace_plugin_path = cwd
+        self.workspace_plugin_path = cwd  / "ide/plugins"
         print(f"ℹ️  Using IDE from: {cwd}")
+        print(f"ℹ️  Using IDE plugins from: {self.workspace_plugin_path}")
         print(f"ℹ️  Using workspace data from: {self.workspace_path}")
 
         # Initialize paths
