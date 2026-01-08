@@ -360,10 +360,11 @@ class Workspace(QMainWindow):
         selection_menu = self.menuBar().addMenu("Selection")
         self.menu_manager._add_action(selection_menu, "Select All", "Ctrl+A", self.select_all_current)
 
-        # self.menu_manager.create_view_menu()
+        self.menu_manager.create_view_menu()
+
         # Create View menu manually (without Ollama)
-        view_menu = self.menuBar().addMenu("View")
-        self.menu_manager._add_action(view_menu, "Toggle Explorer", "Ctrl+B", self.toggle_explorer)
+        #view_menu = self.menuBar().addMenu("View")
+        #self.menu_manager._add_action(view_menu, "Toggle Explorer", "Ctrl+B", self.toggle_explorer)
         # Note: Toggle AI Panel is now handled by OllamaPlugin via Ctrl+L
 
         self.menu_manager.create_go_menu()
