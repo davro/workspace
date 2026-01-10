@@ -134,6 +134,7 @@ class OutlineWidget(QWidget):
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.info_label)
     
+
     def set_editor(self, editor: CodeEditor):
         """
         Set the current editor and parse its symbols
@@ -141,9 +142,39 @@ class OutlineWidget(QWidget):
         Args:
             editor: CodeEditor instance
         """
+        # Stop any pending refresh
+        if hasattr(self, '_refresh_timer'):
+            self._refresh_timer.stop()
+        
+        # Disconnect from previous editor
+        if self.current_editor:
+            try:
+                self.current_editor.textChanged.disconnect(self.on_text_changed)
+            except:
+                pass
+        
         self.current_editor = editor
+        
+        # Connect to new editor's text changes
+        if self.current_editor:
+            self.current_editor.textChanged.connect(self.on_text_changed)
+        
         self.refresh_outline()
+
+
+    def on_text_changed(self):
+        """Handle text changes in editor - debounced refresh"""
+        # Use a timer to avoid refreshing on every keystroke
+        if not hasattr(self, '_refresh_timer'):
+            from PyQt6.QtCore import QTimer
+            self._refresh_timer = QTimer()
+            self._refresh_timer.setSingleShot(True)
+            self._refresh_timer.timeout.connect(self.refresh_outline)
+        
+        # Refresh after 500ms of no typing
+        self._refresh_timer.start(500)
     
+
     def refresh_outline(self):
         """Refresh the outline from current editor"""
         self.tree.clear()
@@ -167,7 +198,8 @@ class OutlineWidget(QWidget):
         # Populate tree
         self.populate_tree(self.symbols)
         self.info_label.setText(f"{len(self.symbols)} symbol(s)")
-    
+
+
     def populate_tree(self, symbols):
         """
         Populate tree widget with symbols
@@ -181,7 +213,8 @@ class OutlineWidget(QWidget):
         # Expand all top-level items
         for i in range(self.tree.topLevelItemCount()):
             self.tree.topLevelItem(i).setExpanded(True)
-    
+
+
     def add_symbol_to_tree(self, symbol: Symbol, parent_item: QTreeWidgetItem):
         """
         Add a symbol to the tree
@@ -204,14 +237,16 @@ class OutlineWidget(QWidget):
         # Add children recursively
         for child in symbol.children:
             self.add_symbol_to_tree(child, item)
-    
+
+
     def on_item_clicked(self, item: QTreeWidgetItem, column: int):
         """Handle item click - jump to symbol"""
         line = item.data(0, Qt.ItemDataRole.UserRole)
         if line and self.current_editor:
             self.symbol_clicked.emit(line)
             self.jump_to_line(line)
-    
+ 
+
     def jump_to_line(self, line: int):
         """
         Jump editor to specified line
@@ -232,9 +267,10 @@ class OutlineWidget(QWidget):
             line - 1
         )
         self.current_editor.setTextCursor(cursor)
-        self.current_editor.ensureCursorVisible()
+        # self.current_editor.ensureCursorVisible()
+        self.current_editor.centerCursor()  # ← Changed from ensureCursorVisible() 
         self.current_editor.setFocus()
-    
+
     def filter_symbols(self, text: str):
         """
         Filter displayed symbols by search text
@@ -254,6 +290,7 @@ class OutlineWidget(QWidget):
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
             self.filter_item_recursive(item, text_lower)
+
     
     def filter_item_recursive(self, item: QTreeWidgetItem, search_text: str) -> bool:
         """
@@ -280,9 +317,22 @@ class OutlineWidget(QWidget):
             item.setExpanded(True)
         
         return show
+
     
     def show_item_recursive(self, item: QTreeWidgetItem, show: bool):
         """Recursively show/hide item and children"""
         item.setHidden(not show)
         for i in range(item.childCount()):
             self.show_item_recursive(item.child(i), show)
+
+
+    def cleanup(self):
+        """Clean up connections when widget is destroyed"""
+        if hasattr(self, '_refresh_timer'):
+            self._refresh_timer.stop()
+        
+        if self.current_editor:
+            try:
+                self.current_editor.textChanged.disconnect(self.on_text_changed)
+            except:
+                pass

@@ -1,156 +1,197 @@
-# ---------------------- Settings Dialog ----------------------
+# ============================================================================
+# SettingsDialog.py - Dynamic settings dialog
+# ============================================================================
+
+"""
+SettingsDialog - Automatically builds UI from SettingDescriptors
+"""
+
 from PyQt6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QFormLayout,
-    QSpinBox,
-    QCheckBox,
-    QComboBox,
-    QDialogButtonBox,
-    QLabel,
+    QDialog, QVBoxLayout, QFormLayout, QSpinBox, QCheckBox, QComboBox,
+    QDialogButtonBox, QLabel, QGroupBox, QDoubleSpinBox, QLineEdit, QScrollArea,
+    QWidget
 )
 from PyQt6.QtCore import Qt
+from ide.core.SettingDescriptor import SettingType, SettingsProvider, SettingDescriptor
+from typing import Dict, Any
 
 
-class SettingsDialog(QDialog):
-    """Settings dialog for IDE configuration"""
+class SettingsDialog(QDialog, SettingsProvider):
+    """Dynamic settings dialog that builds UI from SettingDescriptors"""
 
-    def __init__(self, parent=None):
+    SETTINGS_DESCRIPTORS = [
+        SettingDescriptor(
+            key='widget_resizable',
+            label='Widget Resizable',
+            setting_type=SettingType.BOOLEAN,
+            default=True,
+            description='Settings Widget Resizable',
+            section='Settings'
+        ),
+    ]
+
+    def __init__(self, settings_manager, parent=None):
         super().__init__(parent)
+        self.settings_manager = settings_manager
+        self.widgets: Dict[str, Any] = {}  # Map setting key to widget
+        
         self.setWindowTitle("IDE Settings")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(500)
         self.setModal(True)
 
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-
-        # Explorer Width
-        self.explorer_width = QSpinBox()
-        self.explorer_width.setRange(150, 600)
-        self.explorer_width.setValue(300)
-        self.explorer_width.setSuffix(" px")
-        form.addRow("Explorer Width:", self.explorer_width)
-
-        # Editor Font Size
-        self.editor_font_size = QSpinBox()
-        self.editor_font_size.setRange(8, 32)
-        self.editor_font_size.setValue(11)
-        form.addRow("Editor Font Size:", self.editor_font_size)
-
-        # Tab Width
-        self.tab_width = QSpinBox()
-        self.tab_width.setRange(2, 8)
-        self.tab_width.setValue(4)
-        self.tab_width.setSuffix(" spaces")
-        form.addRow("Tab Width:", self.tab_width)
-
-        # Gutter Width - FIXED: use 'form' instead of 'editor_layout'
-        self.gutter_spin = QSpinBox()
-        self.gutter_spin.setRange(0, 50)
-        self.gutter_spin.setValue(10)
-        self.gutter_spin.setSuffix(" px")
-        self.gutter_spin.setToolTip("Padding between line numbers and text")
-        form.addRow("Gutter Width (padding):", self.gutter_spin)
-
-        # Checkboxes
-        self.restore_session = QCheckBox()
-        self.restore_session.setChecked(True)
-        form.addRow("Restore Open Tabs on Startup:", self.restore_session)
-
-        self.show_line_numbers = QCheckBox()
-        self.show_line_numbers.setChecked(True)
-        form.addRow("Show Line Numbers:", self.show_line_numbers)
-
-        self.auto_save = QCheckBox()
-        self.auto_save.setChecked(False)
-        form.addRow("Auto-save on Tab Switch:", self.auto_save)
-
-        # Ollama Timeout
-        self.ollama_timeout = QSpinBox()
-        self.ollama_timeout.setRange(30, 1200)
-        self.ollama_timeout.setValue(180)
-        self.ollama_timeout.setSuffix(" seconds")
-        form.addRow("Ollama Request Timeout:", self.ollama_timeout)
-
-        # Ollama Context Level
-        context_label = QLabel("Ollama Context Level:")
-        self.context_level_combo = QComboBox()
-        self.context_level_combo.addItem("Minimal (file + language)", "minimal")
-        self.context_level_combo.addItem("Basic (+ line numbers)", "basic")
-        self.context_level_combo.addItem("Smart (+ function/class)", "smart")
-        self.context_level_combo.setCurrentIndex(2)
-        self.context_level_combo.setToolTip(
-            "How much context to include when sending code to Ollama"
-        )
-        form.addRow(context_label, self.context_level_combo)
+        # Main layout
+        main_layout = QVBoxLayout(self)
         
-        # Show context dialog
-        self.show_context_dialog = QCheckBox()
-        self.show_context_dialog.setChecked(True)
-        self.show_context_dialog.setToolTip(
-            "Show preview dialog before sending to Ollama"
-        )
-        form.addRow("Preview Context Before Send:", self.show_context_dialog)
-
-        # Tab Switcher 
-        self.tab_switcher_mru = QCheckBox()
-        self.tab_switcher_mru.setChecked(True)
-        self.tab_switcher_mru.setToolTip(
-            "Ctrl+Tab cycles through tabs in recently used order (like VS Code)"
-        )
-        form.addRow("Recent Order Tab Switching:", self.tab_switcher_mru)
-
-        layout.addLayout(form)
-        layout.addStretch(1)
-
+        # Scroll area for settings
+        scroll = QScrollArea()
+        # scroll.setWidgetResizable(True)
+        scroll.setWidgetResizable(self.settings_manager.get('widget_resizable', True))
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        
+        # Build UI from settings descriptors
+        self._build_ui(scroll_layout)
+        
+        scroll.setWidget(scroll_widget)
+        main_layout.addWidget(scroll)
+        
         # Buttons
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Ok | 
+            QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        main_layout.addWidget(buttons)
+        
+        # Load current settings
+        self.set_settings(settings_manager.settings)
+
+    def _build_ui(self, layout):
+        """Build UI from all registered setting descriptors"""
+        # Group by section
+        sections = self.settings_manager.get_settings_by_section()
+        
+        for section_name in sorted(sections.keys()):
+            descriptors = sections[section_name]
+            
+            # Create group box for section
+            group = QGroupBox(section_name)
+            form = QFormLayout()
+            form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+            form.setFormAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+            )
+            
+            for desc in descriptors:
+                widget = self._create_widget_for_descriptor(desc)
+                self.widgets[desc.key] = widget
+                
+                label = QLabel(desc.label + ":")
+                if desc.description:
+                    widget.setToolTip(desc.description)
+                    label.setToolTip(desc.description)
+                
+                form.addRow(label, widget)
+            
+            group.setLayout(form)
+            layout.addWidget(group)
+        
+        layout.addStretch(1)
+
+    def _create_widget_for_descriptor(self, desc: SettingDescriptor):
+        """Create appropriate Qt widget based on descriptor type"""
+        
+        if desc.setting_type == SettingType.INTEGER:
+            widget = QSpinBox()
+            if desc.min_value is not None:
+                widget.setRange(int(desc.min_value), int(desc.max_value or 999999))
+            if desc.suffix:
+                widget.setSuffix(desc.suffix)
+            widget.setValue(desc.default)
+            return widget
+        
+        elif desc.setting_type == SettingType.FLOAT:
+            widget = QDoubleSpinBox()
+            if desc.min_value is not None:
+                widget.setRange(desc.min_value, desc.max_value or 999999.0)
+            if desc.suffix:
+                widget.setSuffix(desc.suffix)
+            widget.setValue(desc.default)
+            return widget
+        
+        elif desc.setting_type == SettingType.BOOLEAN:
+            widget = QCheckBox()
+            widget.setChecked(desc.default)
+            return widget
+        
+        elif desc.setting_type == SettingType.CHOICE:
+            widget = QComboBox()
+            for display_text, value in desc.choices:
+                widget.addItem(display_text, value)
+            return widget
+        
+        elif desc.setting_type == SettingType.STRING:
+            widget = QLineEdit()
+            widget.setText(str(desc.default))
+            return widget
+        
+        # Fallback
+        return QLabel("Unsupported type")
 
     def get_settings(self) -> dict:
-        """Return current settings as dict"""
-        return {
-            'explorer_width': self.explorer_width.value(),
-            'editor_font_size': self.editor_font_size.value(),
-            'tab_width': self.tab_width.value(),
-            'restore_session': self.restore_session.isChecked(),
-            'show_line_numbers': self.show_line_numbers.isChecked(),
-            'gutter_width': self.gutter_spin.value(),
-            'auto_save': self.auto_save.isChecked(),
-            'ollama_timeout': self.ollama_timeout.value(),
-
-            'ollama_context_level': self.context_level_combo.currentData(),
-            'ollama_show_context_dialog': self.show_context_dialog.isChecked(),
-
-            'tab_switcher_mru': self.tab_switcher_mru.isChecked(),
-        }
+        """Extract current settings from all widgets"""
+        settings = {}
+        
+        for desc in self.settings_manager.get_all_descriptors():
+            widget = self.widgets.get(desc.key)
+            if widget is None:
+                continue
+            
+            if desc.setting_type == SettingType.INTEGER:
+                settings[desc.key] = widget.value()
+            
+            elif desc.setting_type == SettingType.FLOAT:
+                settings[desc.key] = widget.value()
+            
+            elif desc.setting_type == SettingType.BOOLEAN:
+                settings[desc.key] = widget.isChecked()
+            
+            elif desc.setting_type == SettingType.CHOICE:
+                settings[desc.key] = widget.currentData()
+            
+            elif desc.setting_type == SettingType.STRING:
+                settings[desc.key] = widget.text()
+        
+        return settings
 
     def set_settings(self, settings: dict):
-        """Load settings into dialog"""
-        self.explorer_width.setValue(settings.get('explorer_width', 300))
-        self.editor_font_size.setValue(settings.get('editor_font_size', 11))
-        self.tab_width.setValue(settings.get('tab_width', 4))
-        self.gutter_spin.setValue(settings.get('gutter_width', 10))
-        self.restore_session.setChecked(settings.get('restore_session', True))
-        self.show_line_numbers.setChecked(settings.get('show_line_numbers', True))
-        self.auto_save.setChecked(settings.get('auto_save', False))
-        self.ollama_timeout.setValue(settings.get('ollama_timeout', 180))
-
-        # Set context level
-        context_level = settings.get('ollama_context_level', 'smart')
-        for i in range(self.context_level_combo.count()):
-            if self.context_level_combo.itemData(i) == context_level:
-                self.context_level_combo.setCurrentIndex(i)
-                break
-        
-        self.show_context_dialog.setChecked(
-            settings.get('ollama_show_context_dialog', True)
-        )
-
-        self.tab_switcher_mru.setChecked(settings.get('tab_switcher_mru', True))
+        """Load settings into all widgets"""
+        for desc in self.settings_manager.get_all_descriptors():
+            widget = self.widgets.get(desc.key)
+            if widget is None:
+                continue
+            
+            value = settings.get(desc.key, desc.default)
+            
+            if desc.setting_type == SettingType.INTEGER:
+                widget.setValue(int(value))
+            
+            elif desc.setting_type == SettingType.FLOAT:
+                widget.setValue(float(value))
+            
+            elif desc.setting_type == SettingType.BOOLEAN:
+                widget.setChecked(bool(value))
+            
+            elif desc.setting_type == SettingType.CHOICE:
+                # Find matching value in combo box
+                for i in range(widget.count()):
+                    if widget.itemData(i) == value:
+                        widget.setCurrentIndex(i)
+                        break
+            
+            elif desc.setting_type == SettingType.STRING:
+                widget.setText(str(value))

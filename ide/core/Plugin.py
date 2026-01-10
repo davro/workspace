@@ -3,7 +3,7 @@ import inspect
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt
 
-# =====================================================================
+
 class PluginWidget(QWidget):
     """
     Wrapper widget for plugin UI
@@ -45,7 +45,6 @@ class PluginWidget(QWidget):
         pass
 
 
-# =====================================================================
 class PluginManager:
     """
     Manages loading and tracking of IDE plugins

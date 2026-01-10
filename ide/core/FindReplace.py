@@ -1,19 +1,12 @@
+# ============================================================================
+# FindReplace.py (Find Replace Widget)
+# ============================================================================
 from PyQt6.QtWidgets import (
-    QFrame,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLineEdit,
-    QLabel,
-    QPushButton,
-    QCheckBox,
-    QTextEdit,
-    QMessageBox,
-    QSizePolicy,
+    QFrame, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QPushButton,
+    QCheckBox, QTextEdit, QMessageBox, QSizePolicy,
 )
 from PyQt6.QtGui import (
-    QColor,
-    QTextCursor,
-    QTextDocument,
+    QColor, QTextCursor, QTextDocument,
 )
 from PyQt6.QtCore import Qt, QRegularExpression
 
@@ -146,12 +139,31 @@ class FindReplaceWidget(QFrame):
 
         close_btn = QPushButton("✖")
         close_btn.setFixedSize(28, 28)  # ← Increased from 24
-        close_btn.clicked.connect(self.hide)
+        # close_btn.clicked.connect(self.hide)
+        close_btn.clicked.connect(self.close_panel)
         options_row.addWidget(close_btn)
 
         layout.addLayout(options_row)
 
         self.hide()
+
+    def close_panel(self):
+        """Close the find/replace panel"""
+        self.clear_highlights()
+        self.hide()
+        if self.editor:
+            self.editor.setFocus()
+
+    def keyPressEvent(self, event):
+        """Handle key press events"""
+        if event.key() == Qt.Key.Key_Escape:
+            self.clear_highlights()  # Clear highlights when closing
+            self.hide()
+            if self.editor:
+                self.editor.setFocus()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def set_editor(self, editor):
         self.editor = editor
@@ -161,13 +173,17 @@ class FindReplaceWidget(QFrame):
         self.show()
         self.find_input.setFocus()
         self.find_input.selectAll()
-
+    
         if self.editor:
             cursor = self.editor.textCursor()
             if cursor.hasSelection():
                 selected = cursor.selectedText()
                 if '\u2029' not in selected:
                     self.find_input.setText(selected)
+        
+        # Always trigger search when showing the panel
+        if self.find_input.text():
+            self.on_find_text_changed()
 
     def on_find_text_changed(self):
         self.clear_highlights()
@@ -255,34 +271,36 @@ class FindReplaceWidget(QFrame):
         """Use CodeEditor's new selection system"""
         if not self.editor or not self.matches or self.current_match_index < 0:
             return
-
+    
         start, end = self.matches[self.current_match_index]
-
+    
         extra_selections = []
         for i, (s, e) in enumerate(self.matches):
             selection = QTextEdit.ExtraSelection()
             selection.cursor = self.editor.textCursor()
             selection.cursor.setPosition(s)
             selection.cursor.setPosition(e, QTextCursor.MoveMode.KeepAnchor)
-
+    
             if i == self.current_match_index:
                 selection.format.setBackground(QColor("#FFA500"))
             else:
                 selection.format.setBackground(QColor("#4A4A4A"))
-
+    
             extra_selections.append(selection)
-
+    
         # Use CodeEditor's method
         if hasattr(self.editor, 'set_find_replace_selections'):
             self.editor.set_find_replace_selections(extra_selections)
         else:
             self.editor.setExtraSelections(extra_selections)
-
+    
         cursor = self.editor.textCursor()
         cursor.setPosition(start)
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         self.editor.setTextCursor(cursor)
-        self.editor.ensureCursorVisible()
+        
+        # CHANGED: Center the cursor instead of just making it visible
+        self.editor.centerCursor()  # ← Changed from ensureCursorVisible()
 
     def clear_highlights(self):
         """Clear find/replace highlights"""
@@ -295,17 +313,25 @@ class FindReplaceWidget(QFrame):
         self.current_match_index = -1
 
     def find_next(self):
+        # If no matches exist yet, trigger a search first
+        if not self.matches and self.find_input.text():
+            self.on_find_text_changed()
+        
         if not self.matches:
             return
-
+    
         self.current_match_index = (self.current_match_index + 1) % len(self.matches)
         self.highlight_current_match()
         self.match_label.setText(f"{self.current_match_index + 1} of {len(self.matches)}")
 
     def find_previous(self):
+        # If no matches exist yet, trigger a search first
+        if not self.matches and self.find_input.text():
+            self.on_find_text_changed()
+        
         if not self.matches:
             return
-
+    
         self.current_match_index = (self.current_match_index - 1) % len(self.matches)
         self.highlight_current_match()
         self.match_label.setText(f"{self.current_match_index + 1} of {len(self.matches)}")

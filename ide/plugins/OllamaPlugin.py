@@ -1,16 +1,15 @@
-"""
-Ollama AI Plugin for Workspace IDE
+# """
+# Ollama AI Plugin for Workspace IDE
 
-Provides local AI assistance using Ollama:
-- Chat interface with model selection
-- Smart context generation (file info, function context, imports)
-- Send code/selection to AI with custom prompts
-- Quick prompt templates
-- Keyboard shortcuts
-- Tab context menu integration
+# Provides local AI assistance using Ollama:
+# - Chat interface with model selection
+# - Smart context generation (file info, function context, imports)
+# - Send code/selection to AI with custom prompts
+# - Quick prompt templates
+# - Keyboard shortcuts
+# - Tab context menu integration
 
-Author: Workspace IDE Team
-"""
+# """
 
 from pathlib import Path
 from PyQt6.QtWidgets import (
@@ -25,9 +24,14 @@ from OllamaPlugin.OllamaContext import OllamaContextBuilder
 from OllamaPlugin.OllamaContextDialog import OllamaContextDialog
 
 from ide.core.CodeEditor import CodeEditor
+from ide.core.SettingDescriptor import SettingsProvider, SettingDescriptor, SettingType
 
 
-class OllamaPlugin:
+# ============================================================================
+# OllamaPlugin - Now a SettingsProvider!
+# ============================================================================
+
+class OllamaPlugin(SettingsProvider):
     """
     Ollama AI Plugin - Local AI assistance for code
     
@@ -51,11 +55,51 @@ class OllamaPlugin:
     PLUGIN_ICON = "🤖"
     
     # ========================================================================
+    # Settings Descriptors - Define plugin settings
+    # ========================================================================
+    SETTINGS_DESCRIPTORS = [
+        SettingDescriptor(
+            key='ollama_timeout',
+            label='Ollama Request Timeout',
+            setting_type=SettingType.INTEGER,
+            default=240,
+            min_value=30,
+            max_value=1200,
+            suffix=' seconds',
+            description='Maximum time to wait for Ollama response',
+            section='Ollama'
+        ),
+        SettingDescriptor(
+            key='ollama_context_level',
+            label='Ollama Context Level',
+            setting_type=SettingType.CHOICE,
+            default='smart',
+            choices=[
+                ('Minimal (file + language)', 'minimal'),
+                ('Basic (+ line numbers)', 'basic'),
+                ('Smart (+ function/class)', 'smart'),
+            ],
+            description='How much context to include when sending code to Ollama',
+            section='Ollama'
+        ),
+        SettingDescriptor(
+            key='ollama_show_context_dialog',
+            label='Preview Context Before Send',
+            setting_type=SettingType.BOOLEAN,
+            default=True,
+            description='Show preview dialog before sending to Ollama',
+            section='Ollama'
+        ),
+    ]
+    
+    # ========================================================================
     # Initialization
     # ========================================================================
     
     def __init__(self, api):
         """Initialize Ollama plugin"""
+        # NOTE: Don't call super().__init__() - SettingsProvider has no __init__
+        
         self.api = api
         self.initialized = False
         
@@ -74,6 +118,15 @@ class OllamaPlugin:
             return
         
         print(f"[{self.PLUGIN_NAME}] Initializing...")
+        
+        # ====================================================================
+        # CRITICAL: Register this plugin's settings with the IDE
+        # ====================================================================
+        if hasattr(self.api, 'register_settings_provider'):
+            self.api.register_settings_provider(OllamaPlugin)
+            print(f"[{self.PLUGIN_NAME}] Settings registered")
+        else:
+            print(f"[{self.PLUGIN_NAME}] WARNING: Cannot register settings (API doesn't support it)")
         
         # Register keyboard shortcuts
         self.api.register_keyboard_shortcut(
@@ -105,12 +158,6 @@ class OllamaPlugin:
         
         print(f"[{self.PLUGIN_NAME}] Initialized")
     
-    def _register_menus(self):
-        """Register plugin menu items"""
-        # We'll add items to View menu for toggling AI panel
-        # This would require API support: self.api.add_menu_item()
-        pass
-    
     def get_widget(self, parent=None):
         """Return plugin's UI widget"""
         self.widget = OllamaPluginWidget(self, parent)
@@ -127,16 +174,29 @@ class OllamaPlugin:
         print(f"[{self.PLUGIN_NAME}] Cleaned up")
     
     # ========================================================================
+    # Settings Access Helpers
+    # ========================================================================
+    
+    def get_ollama_timeout(self) -> int:
+        """Get Ollama timeout from settings"""
+        settings = self.api.get_settings()
+        return settings.get('ollama_timeout', 240)
+    
+    def get_context_level(self) -> str:
+        """Get context level from settings"""
+        settings = self.api.get_settings()
+        return settings.get('ollama_context_level', 'smart')
+    
+    def should_show_context_dialog(self) -> bool:
+        """Check if context dialog should be shown"""
+        settings = self.api.get_settings()
+        return settings.get('ollama_show_context_dialog', True)
+    
+    # ========================================================================
     # Core AI Actions
     # ========================================================================
     
     def send_to_ollama(self):
-        """
-        Send current editor content to Ollama with smart context
-        Main action triggered by Ctrl+Shift+O
-        """
-        editor = self.api.get_current_editor()
-        
         """Send current editor content to Ollama with smart context"""
         print("[DEBUG] send_to_ollama called")
         
@@ -158,66 +218,67 @@ class OllamaPlugin:
         else:
             text_type = "entire file"
         
-        # Build smart context
-        context = self.context_builder.build_context(editor, level='smart')
+        # Build smart context using setting
+        context_level = self.get_context_level()
+        context = self.context_builder.build_context(editor, level=context_level)
         
-        # Show context dialog
-        if not self.widget:
-            QMessageBox.warning(
-                None,
-                "Plugin Not Ready",
-                "Ollama plugin widget not initialized. Please open the AI panel first."
+        # Show context dialog if enabled in settings
+        if self.should_show_context_dialog():
+            if not self.widget:
+                QMessageBox.warning(
+                    None,
+                    "Plugin Not Ready",
+                    "Ollama plugin widget not initialized. Please open the AI panel first."
+                )
+                return
+            
+            dialog = OllamaContextDialog(
+                self.api.ide,
+                context,
+                self.context_builder,
+                text_type,
+                self.widget.ollama_widget
             )
-            return
-        
-        dialog = OllamaContextDialog(
-            self.api.ide,
-            context,
-            self.context_builder,
-            text_type,
-            self.widget.ollama_widget
-        )
-        
-        if dialog.exec():
+            
+            if not dialog.exec():
+                return  # User cancelled
+            
             prompt = dialog.get_prompt()
             
             if not prompt.strip():
                 return
-            
-            # Format full message with context
-            formatted_context = self.context_builder.format_context(
-                context,
-                include_code=True
-            )
-            
-            full_message = f"{prompt}\n\n{formatted_context}"
-            
-            # Send to Ollama
-            self.widget.ollama_widget.send_text_message(full_message)
-            
-            # Show AI panel if hidden
-            self.show_ai_panel()
-            
-            # Status message
-            selection = context.get('selection')
-            if selection:
-                char_count = selection['char_count']
-            else:
-                char_count = len(editor.toPlainText())
-            
-            self.api.show_status_message(
-                f"Sent {char_count} characters to Ollama",
-                3000
-            )
+        else:
+            # Skip dialog, use default prompt
+            prompt = "Please review this code:"
+        
+        # Format full message with context
+        formatted_context = self.context_builder.format_context(
+            context,
+            include_code=True
+        )
+        
+        full_message = f"{prompt}\n\n{formatted_context}"
+        
+        # Send to Ollama
+        self.widget.ollama_widget.send_text_message(full_message)
+        
+        # Show AI panel if hidden
+        self.show_ai_panel()
+        
+        # Status message
+        selection = context.get('selection')
+        if selection:
+            char_count = selection['char_count']
+        else:
+            char_count = len(editor.toPlainText())
+        
+        self.api.show_status_message(
+            f"Sent {char_count} characters to Ollama",
+            3000
+        )
     
     def send_code_to_ollama(self, code: str, prompt: str = "Explain this code:"):
-        """
-        Send code directly to Ollama (for programmatic use)
-        
-        Args:
-            code: Code text to send
-            prompt: AI prompt
-        """
+        """Send code directly to Ollama (for programmatic use)"""
         if not self.widget:
             return
         
@@ -231,15 +292,11 @@ class OllamaPlugin:
     
     def toggle_ai_panel(self):
         """Toggle AI panel visibility"""
-        # Use the API to toggle right sidebar
         is_visible = self.api.get_right_sidebar_visible()
         
         if is_visible:
-            # Check if we should hide or just switch to AI tab
-            # If AI tab is active, hide sidebar; otherwise switch to AI tab
             if hasattr(self.api.ide, 'right_sidebar'):
                 current_index = self.api.ide.right_sidebar.currentIndex()
-                # Find AI tab index
                 ai_tab_index = -1
                 for i in range(self.api.ide.right_sidebar.count()):
                     tab_text = self.api.ide.right_sidebar.tabText(i)
@@ -248,20 +305,16 @@ class OllamaPlugin:
                         break
                 
                 if ai_tab_index >= 0 and current_index == ai_tab_index:
-                    # AI tab is active, hide sidebar
                     self.api.set_right_sidebar_visible(False)
                     self.panel_visible = False
                 else:
-                    # Switch to AI tab
                     self.api.ide.right_sidebar.setCurrentIndex(ai_tab_index)
                     self.panel_visible = True
         else:
-            # Show sidebar and focus AI tab
             self.api.set_right_sidebar_visible(True)
             self.api.focus_right_sidebar_tab("AI")
             self.panel_visible = True
         
-        # Status message
         status = "shown" if self.panel_visible else "hidden"
         self.api.show_status_message(f"AI panel {status}", 1000)
     
@@ -275,36 +328,18 @@ class OllamaPlugin:
         """Hide AI panel"""
         self.api.set_right_sidebar_visible(False)
         self.panel_visible = False
-    
-    # ========================================================================
-    # Helper Methods
-    # ========================================================================
-    
-    def get_ollama_timeout(self) -> int:
-        """Get Ollama timeout from settings"""
-        settings = self.api.get_settings()
-        return settings.get('ollama_timeout', 180)
 
 
 # ============================================================================
-# Plugin UI Widget
+# Plugin UI Widget (unchanged)
 # ============================================================================
 
 class OllamaPluginWidget(QWidget):
-    """
-    Ollama Plugin UI Widget
-    
-    Provides:
-    - Chat interface
-    - Model selection
-    - Status indicators
-    - Quick actions
-    """
+    """Ollama Plugin UI Widget"""
     
     def __init__(self, plugin, parent=None):
         super().__init__(parent)
         self.plugin = plugin
-        
         self.init_ui()
     
     def init_ui(self):
@@ -313,9 +348,8 @@ class OllamaPluginWidget(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
         
-        # ===== Header =====
+        # Header
         header_layout = QHBoxLayout()
-        
         header = QLabel(f"{self.plugin.PLUGIN_ICON} {self.plugin.PLUGIN_NAME}")
         header.setStyleSheet("""
             font-size: 14px;
@@ -324,10 +358,9 @@ class OllamaPluginWidget(QWidget):
             padding: 5px;
         """)
         header_layout.addWidget(header)
-        
         header_layout.addStretch()
         
-        # Quick action buttons
+        # Quick send button
         send_file_btn = QPushButton("📄")
         send_file_btn.setToolTip("Send current file to AI (Ctrl+Shift+O)")
         send_file_btn.setMaximumWidth(35)
@@ -345,24 +378,22 @@ class OllamaPluginWidget(QWidget):
             }
         """)
         header_layout.addWidget(send_file_btn)
-        
         layout.addLayout(header_layout)
         
-        # ===== Info Label =====
+        # Info
         info = QLabel("Local AI powered by Ollama")
         info.setStyleSheet("color: #888; font-size: 10pt; padding: 2px 5px;")
         layout.addWidget(info)
         
-        # ===== Ollama Chat Widget =====
+        # Chat widget
         self.ollama_widget = OllamaChatWidget(parent=self)
         layout.addWidget(self.ollama_widget)
         
-        # ===== Quick Prompts Section =====
+        # Quick prompts
         prompts_label = QLabel("<b>Quick Prompts:</b>")
         prompts_label.setStyleSheet("padding: 5px; color: #CCC;")
         layout.addWidget(prompts_label)
         
-        # Quick prompt buttons
         quick_prompts_layout = QVBoxLayout()
         quick_prompts_layout.setSpacing(3)
         
@@ -378,9 +409,7 @@ class OllamaPluginWidget(QWidget):
         for btn_text, prompt, tooltip in quick_prompts:
             btn = QPushButton(btn_text)
             btn.setToolTip(tooltip)
-            btn.clicked.connect(
-                lambda checked=False, p=prompt: self.quick_prompt(p)
-            )
+            btn.clicked.connect(lambda checked=False, p=prompt: self.quick_prompt(p))
             btn.setStyleSheet("""
                 QPushButton {
                     text-align: left;
@@ -398,40 +427,26 @@ class OllamaPluginWidget(QWidget):
         
         layout.addLayout(quick_prompts_layout)
         
-        # ===== Status Section =====
+        # Status
         status_layout = QHBoxLayout()
-        
         self.status_label = QLabel("Ready")
         self.status_label.setStyleSheet("color: #888; font-size: 9pt;")
         status_layout.addWidget(self.status_label)
-        
         status_layout.addStretch()
         
-        # Keyboard shortcut hint
         hint = QLabel("Ctrl+Shift+O: Send to AI")
         hint.setStyleSheet("color: #666; font-size: 9pt; font-style: italic;")
         status_layout.addWidget(hint)
-        
         layout.addLayout(status_layout)
     
     def quick_prompt(self, prompt: str):
-        """
-        Execute a quick prompt on current editor content
-        
-        Args:
-            prompt: The AI prompt to use
-        """
+        """Execute a quick prompt on current editor content"""
         editor = self.plugin.api.get_current_editor()
         
         if not isinstance(editor, CodeEditor):
-            QMessageBox.warning(
-                self,
-                "No Editor",
-                "Please open a file first."
-            )
+            QMessageBox.warning(self, "No Editor", "Please open a file first.")
             return
         
-        # Get code
         cursor = editor.textCursor()
         if cursor.hasSelection():
             code = cursor.selectedText().replace('\u2029', '\n')
@@ -441,15 +456,12 @@ class OllamaPluginWidget(QWidget):
             text_type = "file"
         
         if not code.strip():
-            QMessageBox.warning(
-                self,
-                "No Code",
-                "No code to send."
-            )
+            QMessageBox.warning(self, "No Code", "No code to send.")
             return
         
-        # Build context
-        context = self.plugin.context_builder.build_context(editor, level='smart')
+        # Build context using setting
+        context_level = self.plugin.get_context_level()
+        context = self.plugin.context_builder.build_context(editor, level=context_level)
         formatted_context = self.plugin.context_builder.format_context(
             context,
             include_code=True

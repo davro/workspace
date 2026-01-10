@@ -14,13 +14,36 @@ from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from ide import WORKSPACE_PATH
+from ide.core.SettingDescriptor import SettingsProvider, SettingDescriptor, SettingType
 
+class ProjectsPanel(QWidget, SettingsProvider):
 
-class ProjectsPanel(QWidget):
     """Panel showing workspace projects that can be activated"""
-
     project_selected = pyqtSignal(str)
     projects_changed = pyqtSignal()
+
+    # ========================================================================
+    # Settings Descriptors
+    # ========================================================================
+    # Note: active_projects is managed dynamically, but we still want it
+    # persisted in settings. We don't show it in the settings UI since
+    # it's managed through this panel's checkboxes.
+    # 
+    # To hide from settings dialog, we could add a 'hidden' flag to
+    # SettingDescriptor, or just not include it. For now, we'll manage
+    # it manually outside the descriptor system.
+    # ========================================================================
+    
+    SETTINGS_DESCRIPTORS = [
+        # We could add project-related settings here if needed, like:
+        # - Auto-refresh interval
+        # - Show hidden folders
+        # - File count display toggle
+        # 
+        # For now, active_projects is managed separately since it's
+        # a dynamic list that changes through UI interaction, not
+        # through the settings dialog.
+    ]
 
     def __init__(self, workspace_path, parent=None):
         super().__init__(parent)

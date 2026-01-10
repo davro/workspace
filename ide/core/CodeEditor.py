@@ -14,14 +14,66 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtCore import Qt, QRect, QSize
 
-from ide.core.SyntaxHighlighter import PythonHighlighter
+from ide.core.SyntaxHighlighter import PythonHighlighter, PhpHighlighter
+from ide.core.SettingDescriptor import SettingsProvider, SettingDescriptor, SettingType
 
 """
 Main Code Editor Class
 A custom QTextEdit widget with enhanced features for code editing.
 """
-class CodeEditor(QPlainTextEdit):
-    def __init__(self, file_path=None, font_size=11, tab_width=4,
+class CodeEditor(QPlainTextEdit, SettingsProvider):
+    """
+    Main Code Editor Class
+    A custom QTextEdit widget with enhanced features for code editing.
+    """
+    
+    # ========================================================================
+    # Settings Descriptors - Define what settings CodeEditor uses
+    # ========================================================================
+    SETTINGS_DESCRIPTORS = [
+        SettingDescriptor(
+            key='editor_font_size',
+            label='Editor Font Size',
+            setting_type=SettingType.INTEGER,
+            default=10,
+            min_value=8,
+            max_value=32,
+            description='Font size for the code editor',
+            section='Editor'
+        ),
+        SettingDescriptor(
+            key='tab_width',
+            label='Tab Width',
+            setting_type=SettingType.INTEGER,
+            default=4,
+            min_value=2,
+            max_value=8,
+            suffix=' spaces',
+            description='Number of spaces per tab character',
+            section='Editor'
+        ),
+        SettingDescriptor(
+            key='show_line_numbers',
+            label='Show Line Numbers',
+            setting_type=SettingType.BOOLEAN,
+            default=True,
+            description='Display line numbers in the editor gutter',
+            section='Editor'
+        ),
+        SettingDescriptor(
+            key='gutter_width',
+            label='Gutter Width (padding)',
+            setting_type=SettingType.INTEGER,
+            default=10,
+            min_value=0,
+            max_value=50,
+            suffix=' px',
+            description='Padding between line numbers and text',
+            section='Editor'
+        ),
+    ]
+
+    def __init__(self, file_path=None, font_size=10, tab_width=4,
                 show_line_numbers=True, gutter_width=10):
         """
         Initialize code editor
@@ -49,11 +101,11 @@ class CodeEditor(QPlainTextEdit):
         )
 
         # State
-        self.file_path = None
-        self.highlighter = None
+        self.file_path         = None
+        self.highlighter       = None
         self.show_line_numbers = show_line_numbers
-        self.gutter_width = gutter_width
-        self.tab_width = tab_width
+        self.gutter_width      = gutter_width
+        self.tab_width         = tab_width
 
         # Track extra selections separately to avoid conflicts
         self.current_line_selection = None
@@ -267,9 +319,13 @@ class CodeEditor(QPlainTextEdit):
 
             self.file_path = path
 
-            # Apply syntax highlighting if it's a Python file
+            # Python Apply syntax highlighting
             if str(path).lower().endswith(".py"):
                 self.highlighter = PythonHighlighter(self.document())
+
+            # PHP Apply syntax highlighting
+            if str(path).lower().endswith(".php"):
+                self.highlighter = PhpHighlighter(self.document())
 
             self.document().setModified(False)
             return True

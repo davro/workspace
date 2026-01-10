@@ -38,6 +38,7 @@ class TabSwitcherDialog(QDialog):
         # Position dialog at center of parent
         self.center_on_parent()
 
+
     def setup_ui(self):
         """Setup the UI layout"""
         layout = QVBoxLayout(self)

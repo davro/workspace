@@ -195,6 +195,60 @@ class PluginAPI:
         """
         return {name: len(callbacks) for name, callbacks in self.hooks.items()}
 
+
+    # ========================================================================
+    # Settings Support
+    # ========================================================================
+    
+    def register_settings_provider(self, provider_class):
+        """
+        Register a settings provider (plugin class with SETTINGS_DESCRIPTORS)
+        
+        Args:
+            provider_class: A class inheriting from SettingsProvider
+        """
+        if hasattr(self.ide, 'settings_manager'):
+            self.ide.settings_manager.register_provider(provider_class)
+            print(f"[PluginAPI] Registered settings provider: {provider_class.__name__}")
+            
+            # Reload settings to include new defaults
+            self.ide.settings_manager.load()
+            
+            return True
+        else:
+            print(f"[PluginAPI] WARNING: Cannot register settings (no settings_manager)")
+            return False
+    
+    def get_settings(self):
+        """Get current IDE settings as dict"""
+        if hasattr(self.ide, 'settings_manager'):
+            return self.ide.settings_manager.settings
+        return {}
+
+    # def get_settings(self) -> Dict[str, Any]:
+        # """
+        # Get IDE settings
+
+        # Returns:
+            # Dictionary of settings
+        # """
+        # if hasattr(self.ide, 'settings_manager'):
+            # return self.ide.settings_manager.settings
+        # return {}
+
+    def get_setting(self, key, default=None):
+        """Get a specific setting value"""
+        if hasattr(self.ide, 'settings_manager'):
+            return self.ide.settings_manager.get(key, default)
+        return default
+    
+    def set_setting(self, key, value):
+        """Set a setting value (does not save automatically)"""
+        if hasattr(self.ide, 'settings_manager'):
+            self.ide.settings_manager.set(key, value)
+            return True
+        return False
+
     # =========================================================================
     # IDE Access Methods
     # =========================================================================
@@ -257,17 +311,6 @@ class PluginAPI:
         if hasattr(self.ide, 'split_manager'):
             return self.ide.split_manager.get_all_editors()
         return []
-
-    def get_settings(self) -> Dict[str, Any]:
-        """
-        Get IDE settings
-
-        Returns:
-            Dictionary of settings
-        """
-        if hasattr(self.ide, 'settings_manager'):
-            return self.ide.settings_manager.settings
-        return {}
 
     # =========================================================================
     # UI Manipulation Methods
@@ -597,7 +640,6 @@ class PluginAPI:
             return self.ide.get_current_editor()
         return None
     
-    
     def get_workspace_path(self):
         """
         Get workspace root path
@@ -608,18 +650,6 @@ class PluginAPI:
         if hasattr(self.ide, 'workspace_path'):
             return self.ide.workspace_path
         return None
-    
-    
-    def get_settings(self):
-        """
-        Get IDE settings dictionary
-        
-        Returns:
-            dict: Current IDE settings
-        """
-        if hasattr(self.ide, 'settings_manager'):
-            return self.ide.settings_manager.settings
-        return {}
     
     
     def show_status_message(self, message: str, timeout: int = 2000):
