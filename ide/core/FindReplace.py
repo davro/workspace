@@ -10,12 +10,49 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtCore import Qt, QRegularExpression
 
+from ide.core.SettingDescriptor import SettingType, SettingsProvider, SettingDescriptor
 
-class FindReplaceWidget(QFrame):
+
+class FindReplaceWidget(QFrame, SettingsProvider):
     """Find and Replace panel widget"""
 
-    def __init__(self, parent=None):
+    SETTINGS_DESCRIPTORS = [
+        SettingDescriptor(
+            key='find_replace_contents_margins',
+            label='Layout Contents Margins',
+            setting_type=SettingType.INTEGER,
+            default=5,
+            min_value=1,
+            max_value=100,
+            suffix=' px',
+            description='Layout Contents Margins',
+            section='Find Replace'
+        ),
+        # SettingDescriptor(
+            # key='settings_minimum_height',
+            # label='Minimum Height',
+            # setting_type=SettingType.INTEGER,
+            # default=800,
+            # min_value=800,
+            # max_value=1300,
+            # suffix=' px',
+            # description='Minimum Height of the file settings dialog panel',
+            # section='Settings'
+        # ),
+        # SettingDescriptor(
+            # key='settings_model',
+            # label='Model',
+            # setting_type=SettingType.BOOLEAN,
+            # default=True,
+            # description='Model True / False',
+            # section='Settings'
+        # ),
+    ]
+
+    def __init__(self, settings_manager, parent=None):
         super().__init__(parent)
+
+        self.settings_manager = settings_manager
         self.editor = None
         self.current_match_index = -1
         self.matches = []
@@ -65,8 +102,12 @@ class FindReplaceWidget(QFrame):
             }
         """)
 
+        find_replace_contents_margins = self.settings_manager.get('find_replace_contents_margins', 5)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setContentsMargins(
+            find_replace_contents_margins, find_replace_contents_margins,
+            find_replace_contents_margins, find_replace_contents_margins
+        )
         layout.setSpacing(5)  # ← Increased from 3
 
         # Find row

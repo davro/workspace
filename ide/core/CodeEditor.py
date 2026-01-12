@@ -71,13 +71,32 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             description='Padding between line numbers and text',
             section='Editor'
         ),
+
+        # Column marker
+        SettingDescriptor(
+            key='show_column_marker',
+            label='Show Column Marker',
+            setting_type=SettingType.BOOLEAN,
+            default=True,
+            section='Editor'
+        ),
+        SettingDescriptor(
+            key='column_marker_position',
+            label='Column Marker Position',
+            setting_type=SettingType.INTEGER,
+            default=80,
+            min_value=40,
+            max_value=120,
+            section='Editor'
+        ),
     ]
 
+
     def __init__(self, file_path=None, font_size=10, tab_width=4,
-                show_line_numbers=True, gutter_width=10):
+                 show_line_numbers=True, gutter_width=10):
         """
         Initialize code editor
-
+    
         Args:
             file_path: Path to file to load
             font_size: Font size in points
@@ -86,7 +105,7 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             gutter_width: Gutter width (padding) in pixels between line numbers and text
         """
         super().__init__()
-
+    
         # Font and styling
         font = QFont("Monospace", font_size)
         font.setStyleHint(QFont.StyleHint.TypeWriter)
@@ -94,46 +113,114 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         self.setStyleSheet(
             "QPlainTextEdit { background-color: #2B2B2B; color: #A9B7C6; border: none; }"
         )
-
+    
         # Tab settings
         self.setTabStopDistance(
             QFontMetricsF(self.font()).horizontalAdvance(' ') * tab_width
         )
-
+    
         # State
         self.file_path         = None
         self.highlighter       = None
         self.show_line_numbers = show_line_numbers
         self.gutter_width      = gutter_width
         self.tab_width         = tab_width
-
+    
         # Track extra selections separately to avoid conflicts
         self.current_line_selection = None
         self.find_replace_selections = []
-
+    
         # Line number area
         self.line_number_area = LineNumberArea(self) if show_line_numbers else None
-
+    
+        # Column marker (NEW!)
+        self.column_marker = ColumnMarker(self)
+        self.column_marker.setGeometry(self.viewport().geometry())
+        self.column_marker.show()
+    
         # Connect signals
         if self.line_number_area:
             self.blockCountChanged.connect(self.update_line_number_area_width)
             self.updateRequest.connect(self.update_line_number_area)
-
+    
         # Connections for line numbers and highlighting
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.update_line_number_area_width(0)
-
+    
         # Notify parent IDE whenever the document modified state changes
         self.textChanged.connect(self.on_text_changed)
-
+    
         # Load file if provided
         if file_path:
             self.load_file(file_path)
-
+    
         # Connect text changed signal for plugins
         self.textChanged.connect(self._on_text_changed)
+
+
+    # def __init__(self, file_path=None, font_size=10, tab_width=4,
+                # show_line_numbers=True, gutter_width=10):
+        # """
+        # Initialize code editor
+
+        # Args:
+            # file_path: Path to file to load
+            # font_size: Font size in points
+            # tab_width: Tab width in spaces
+            # show_line_numbers: Show line numbers
+            # gutter_width: Gutter width (padding) in pixels between line numbers and text
+        # """
+        # super().__init__()
+
+        # # Font and styling
+        # font = QFont("Monospace", font_size)
+        # font.setStyleHint(QFont.StyleHint.TypeWriter)
+        # self.setFont(font)
+        # self.setStyleSheet(
+            # "QPlainTextEdit { background-color: #2B2B2B; color: #A9B7C6; border: none; }"
+        # )
+
+        # # Tab settings
+        # self.setTabStopDistance(
+            # QFontMetricsF(self.font()).horizontalAdvance(' ') * tab_width
+        # )
+
+        # # State
+        # self.file_path         = None
+        # self.highlighter       = None
+        # self.show_line_numbers = show_line_numbers
+        # self.gutter_width      = gutter_width
+        # self.tab_width         = tab_width
+
+        # # Track extra selections separately to avoid conflicts
+        # self.current_line_selection = None
+        # self.find_replace_selections = []
+
+        # # Line number area
+        # self.line_number_area = LineNumberArea(self) if show_line_numbers else None
+
+        # # Connect signals
+        # if self.line_number_area:
+            # self.blockCountChanged.connect(self.update_line_number_area_width)
+            # self.updateRequest.connect(self.update_line_number_area)
+
+        # # Connections for line numbers and highlighting
+        # self.blockCountChanged.connect(self.update_line_number_area_width)
+        # self.updateRequest.connect(self.update_line_number_area)
+        # self.cursorPositionChanged.connect(self.highlight_current_line)
+        # self.update_line_number_area_width(0)
+
+        # # Notify parent IDE whenever the document modified state changes
+        # self.textChanged.connect(self.on_text_changed)
+
+        # # Load file if provided
+        # if file_path:
+            # self.load_file(file_path)
+
+        # # Connect text changed signal for plugins
+        # self.textChanged.connect(self._on_text_changed)
 
 
     def _on_text_changed(self):
@@ -159,20 +246,43 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         space = 3 + self.fontMetrics().horizontalAdvance('9') * digits + self.gutter_width
         return space
 
+    # def update_line_number_area(self, rect, dy):
+        # """Update the line number area when the editor scrolls or updates"""
+        # if not self.line_number_area:
+            # return
+
+        # if dy:
+            # self.line_number_area.scroll(0, dy)
+        # else:
+            # self.line_number_area.update(
+                # 0, rect.y(), self.line_number_area.width(), rect.height()
+            # )
+
+        # if rect.contains(self.viewport().rect()):
+            # self.update_line_number_area_width(0)
+
+    # ============================================================================
+    # update_line_number_area
+    # ============================================================================
+    
     def update_line_number_area(self, rect, dy):
         """Update the line number area when the editor scrolls or updates"""
         if not self.line_number_area:
             return
-
+        
         if dy:
             self.line_number_area.scroll(0, dy)
         else:
             self.line_number_area.update(
                 0, rect.y(), self.line_number_area.width(), rect.height()
             )
-
+        
         if rect.contains(self.viewport().rect()):
             self.update_line_number_area_width(0)
+        
+        # ADD THIS: Update column marker when scrolling
+        if hasattr(self, 'column_marker'):
+            self.column_marker.update()
 
     def set_gutter_width(self, width):
         """Set the gutter width and update display"""
@@ -218,19 +328,72 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         )
 
     def resizeEvent(self, event):
-        """Handle resize events to update line number area"""
+        """Handle resize events to update line number area and column marker"""
         super().resizeEvent(event)
+        
+        # Update line number area
+        if self.line_number_area:
+            cr = self.contentsRect()
+            digits = len(str(max(1, self.blockCount())))
+            line_number_width = 3 + self.fontMetrics().horizontalAdvance('9') * digits
+            
+            self.line_number_area.setGeometry(
+                QRect(cr.left(), cr.top(), line_number_width, cr.height())
+            )
+        
+        # ADD THIS: Update column marker
+        if hasattr(self, 'column_marker'):
+            self.column_marker.setGeometry(self.viewport().geometry())
+            self.column_marker.raise_()  # Ensure it's on top
 
-        if not self.line_number_area:
-            return
 
-        cr = self.contentsRect()
-        digits = len(str(max(1, self.blockCount())))
-        line_number_width = 3 + self.fontMetrics().horizontalAdvance('9') * digits
+    # def resizeEvent(self, event):
+        # """Handle resize events to update line number area"""
+        # super().resizeEvent(event)
 
-        self.line_number_area.setGeometry(
-            QRect(cr.left(), cr.top(), line_number_width, cr.height())
-        )
+        # if not self.line_number_area:
+            # return
+
+        # cr = self.contentsRect()
+        # digits = len(str(max(1, self.blockCount())))
+        # line_number_width = 3 + self.fontMetrics().horizontalAdvance('9') * digits
+
+        # self.line_number_area.setGeometry(
+            # QRect(cr.left(), cr.top(), line_number_width, cr.height())
+        # )
+
+    # ============================================================================
+    # Methods to toggle column marker visibility
+    # ============================================================================
+    
+    def set_show_column_marker(self, show):
+        """
+        Toggle column marker visibility.
+        
+        Args:
+            show: Boolean to show/hide the marker
+        """
+        if hasattr(self, 'column_marker'):
+            if show:
+                self.column_marker.show()
+            else:
+                self.column_marker.hide()
+    
+    
+    def set_column_marker_position(self, position):
+        """
+        Set the column marker position.
+        
+        Args:
+            position: Column number (e.g., 80, 100, 120)
+        """
+        if hasattr(self, 'column_marker'):
+            self.column_marker.update()  # Trigger repaint
+
+
+    # ============================================================================
+    # Line number area methods
+    # ============================================================================    
 
     def line_number_area_paint_event(self, event):
         painter = QPainter(self.line_number_area)
@@ -597,3 +760,83 @@ class LineNumberArea(QWidget):
         :type event: PyQt6.QtWidgets.QPaint, QPaintEvent
         """
         self.editor.line_number_area_paint_event(event)
+
+
+class ColumnMarker(QWidget):
+    """
+    Column marker widget that draws a vertical line at a specified column.
+    
+    This provides a visual guide for line length (typically at 80 or 120 columns).
+    Similar to the vertical rulers in VS Code, Sublime Text, etc.
+    """
+    
+    def __init__(self, editor):
+        """
+        Initialize the ColumnMarker with the given editor instance.
+        
+        Args:
+            editor: The CodeEditor instance that owns this marker
+        """
+        super().__init__(editor)
+        self.editor = editor
+        
+        # Make widget transparent to mouse events
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        
+        # Set widget to be on top but not interfere
+        self.setAutoFillBackground(False)
+    
+    def paintEvent(self, event):
+        """
+        Paint the column marker line.
+        
+        Args:
+            event: The QPaintEvent
+        """
+        # Get settings from editor's parent workspace
+        settings = self._get_settings()
+        
+        if not settings.get('show_column_marker', True):
+            return
+        
+        column_position = settings.get('column_marker_position', 80)
+        
+        # Calculate x position based on font metrics
+        font_metrics = QFontMetricsF(self.editor.font())
+        char_width = font_metrics.horizontalAdvance(' ')
+        x_position = int(char_width * column_position)
+        
+        # Account for line number area offset
+        if self.editor.line_number_area:
+            x_position += self.editor.line_number_area.width()
+        
+        # Draw the vertical line
+        painter = QPainter(self)
+        painter.setPen(QColor("#3C3C3C"))  # Subtle gray color
+        painter.drawLine(
+            x_position,
+            0,
+            x_position,
+            self.editor.viewport().height()
+        )
+    
+    def _get_settings(self):
+        """
+        Get settings from the workspace.
+        
+        Returns:
+            dict: Settings dictionary
+        """
+        # Walk up parent tree to find workspace with settings_manager
+        parent = self.editor.parent()
+        while parent is not None:
+            if hasattr(parent, 'settings_manager'):
+                return parent.settings_manager.settings
+            parent = parent.parent()
+        
+        # Fallback to defaults
+        return {
+            'show_column_marker': True,
+            'column_marker_position': 80
+        }
+

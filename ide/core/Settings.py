@@ -21,24 +21,55 @@ class SettingsDialog(QDialog, SettingsProvider):
 
     SETTINGS_DESCRIPTORS = [
         SettingDescriptor(
-            key='widget_resizable',
+            key='settings_widget_resizable',
             label='Widget Resizable',
             setting_type=SettingType.BOOLEAN,
             default=True,
             description='Settings Widget Resizable',
             section='Settings'
         ),
+        SettingDescriptor(
+            key='settings_minimum_width',
+            label='Minimum Width',
+            setting_type=SettingType.INTEGER,
+            default=600,
+            min_value=600,
+            max_value=1000,
+            suffix=' px',
+            description='Minimum Width of the file settings dialog panel',
+            section='Settings'
+        ),
+        SettingDescriptor(
+            key='settings_minimum_height',
+            label='Minimum Height',
+            setting_type=SettingType.INTEGER,
+            default=800,
+            min_value=800,
+            max_value=1300,
+            suffix=' px',
+            description='Minimum Height of the file settings dialog panel',
+            section='Settings'
+        ),
+        SettingDescriptor(
+            key='settings_modal',
+            label='Settings Modal',
+            setting_type=SettingType.BOOLEAN,
+            default=True,
+            description='Modal True / False',
+            section='Settings'
+        ),
     ]
 
     def __init__(self, settings_manager, parent=None):
         super().__init__(parent)
+
         self.settings_manager = settings_manager
         self.widgets: Dict[str, Any] = {}  # Map setting key to widget
         
         self.setWindowTitle("IDE Settings")
-        self.setMinimumWidth(600)
-        self.setMinimumHeight(500)
-        self.setModal(True)
+        self.setMinimumWidth(self.settings_manager.get('settings_minimum_width', 600))
+        self.setMinimumHeight(self.settings_manager.get('settings_minimum_height', 800))
+        self.setModal(self.settings_manager.get('settings_modal', True))
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -46,7 +77,7 @@ class SettingsDialog(QDialog, SettingsProvider):
         # Scroll area for settings
         scroll = QScrollArea()
         # scroll.setWidgetResizable(True)
-        scroll.setWidgetResizable(self.settings_manager.get('widget_resizable', True))
+        scroll.setWidgetResizable(self.settings_manager.get('settings_widget_resizable', True))
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         
         scroll_widget = QWidget()

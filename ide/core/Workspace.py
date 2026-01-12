@@ -132,7 +132,6 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Initialize Plugin API/Manager System
         self.plugin_api = PluginAPI(self)
-        # print (f"{self.plugin_api._plugins}")
 
         # Create Plugin Manager (manages plugin files on disk)
         self.plugin_manager = PluginManager(self.workspace_plugin_path, self.plugin_api)
@@ -153,16 +152,14 @@ class Workspace(QMainWindow, SettingsProvider):
         self.menu_manager         = MenuManager(self.menuBar(), self)
         self.tab_order_manager    = TabOrderManager()
 
-
         # Register all components that have settings
         self.settings_manager.register_provider(Workspace)
         self.settings_manager.register_provider(CodeEditor)
         self.settings_manager.register_provider(SettingsDialog)
-        # self.settings_manager.register_provider(OllamaIntegration)
-        
+        self.settings_manager.register_provider(FindReplaceWidget)
+
         # Load settings (will use defaults for first run)
         self.settings_manager.load()
-
 
         # Expose status_message for compatibility
         self.status_message = self.statusbar_manager.status_message
@@ -202,7 +199,6 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Apply initial settings
         self.apply_settings()
-
 
     def apply_settings(self):
         """
@@ -289,8 +285,7 @@ class Workspace(QMainWindow, SettingsProvider):
         if hasattr(self, '_restore_session'):
             return self._restore_session
         return self.settings_manager.get('restore_session', True)
-    
-    
+
     def should_auto_save(self):
         """Check if auto-save is enabled for tab switching"""
         if hasattr(self, '_auto_save_enabled'):
@@ -373,7 +368,6 @@ class Workspace(QMainWindow, SettingsProvider):
 
         self.main_splitter.addWidget(left_tabs)
 
-
     def handle_file_moved(self, old_path: str, new_path: str):
         """
         Handle when a file is moved - update open tabs
@@ -400,7 +394,6 @@ class Workspace(QMainWindow, SettingsProvider):
                 # Mark session dirty
                 self.mark_session_dirty()
 
-
     def _create_editor_area(self):
         """Create center editor area"""
         editor_container = QWidget()
@@ -409,7 +402,7 @@ class Workspace(QMainWindow, SettingsProvider):
         editor_layout.setSpacing(0)
 
         # Find/Replace widget
-        self.find_replace = FindReplaceWidget()
+        self.find_replace = FindReplaceWidget(self.settings_manager)
         editor_layout.addWidget(self.find_replace)
 
         # Initialize split editor manager
@@ -430,7 +423,6 @@ class Workspace(QMainWindow, SettingsProvider):
 
         self.main_splitter.addWidget(editor_container)
 
-
     def _create_right_sidebar(self):
         """Create right sidebar with Outline (AI moved to plugin)"""
     
@@ -447,7 +439,6 @@ class Workspace(QMainWindow, SettingsProvider):
         # Store reference for plugins to use
         self.right_sidebar = right_tabs
 
-
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts"""
 
@@ -462,26 +453,20 @@ class Workspace(QMainWindow, SettingsProvider):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(callback)
 
-
     def split_editor_vertical(self):
         self.split_manager.split_vertical()
-
 
     def split_editor_horizontal(self):
         self.split_manager.split_horizontal()
 
-
     def close_editor_split(self):
         self.split_manager.close_split()
-
 
     def move_tab_to_split(self):
         self.split_manager.move_tab_to_other_group()
 
-
     def focus_other_split(self):
         self.split_manager.focus_other_group()
-
 
     def open_in_split(self):
         """Open current file in split view"""
@@ -562,10 +547,6 @@ class Workspace(QMainWindow, SettingsProvider):
     # File Operations
     # =====================================================================
 
-    # =====================================================================
-    # Update save_current_file to trigger hook
-    # =====================================================================
-
     def save_current_file(self):
         """Save current file"""
         current_widget = self.get_current_editor()
@@ -583,7 +564,6 @@ class Workspace(QMainWindow, SettingsProvider):
                 # Refresh outline after save
                 if hasattr(self, 'outline_widget'):
                     self.outline_widget.refresh_outline()
-
 
     def save_all_files(self):
         """Save all modified files across all editor groups"""
@@ -727,7 +707,6 @@ class Workspace(QMainWindow, SettingsProvider):
     def show_tab_context_menu(self, position):
         """Show context menu for tabs"""
 
-
         #print(f"Context menu position: {position}")
         tab_index = self.tabs.tabBar().tabAt(position)
 
@@ -849,7 +828,6 @@ class Workspace(QMainWindow, SettingsProvider):
                 # Mark session as dirty
                 self.mark_session_dirty()
 
-
     def _on_cursor_position_changed(self, editor):
         """Handle cursor position change"""
         if isinstance(editor, CodeEditor):
@@ -858,13 +836,11 @@ class Workspace(QMainWindow, SettingsProvider):
             column = cursor.columnNumber() + 1
             self.trigger_cursor_moved(editor, line, column)
 
-
     def on_editor_modified(self, editor):
         """Handle editor modification"""
         index = self.tabs.indexOf(editor)
         if index != -1:
             self.tabs.set_tab_modified(index, editor.document().isModified())
-
 
     # =====================================================================
     # Quick Open
@@ -1114,7 +1090,6 @@ class Workspace(QMainWindow, SettingsProvider):
             self.status_message.setText(f"Running {file_path.name}...")
             QTimer.singleShot(4000, lambda: self.status_message.setText(""))
 
-
     def open_external_terminal(self, directory=None, command=None):
         """Open external terminal"""
         import os
@@ -1191,8 +1166,7 @@ class Workspace(QMainWindow, SettingsProvider):
         
         if timeout > 0:
             QTimer.singleShot(timeout, lambda: self.clear_status_message())
-    
-    
+
     def clear_status_message(self):
         """Clear the status bar message"""
         if hasattr(self, 'status_message'):
@@ -1216,8 +1190,6 @@ class Workspace(QMainWindow, SettingsProvider):
             
             # Show confirmation
             self.show_status_message("Settings saved and applied", 3000)
-
-
 
     def show_documentation(self):
         """Show documentation"""

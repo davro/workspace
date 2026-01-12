@@ -34,7 +34,7 @@ class SettingsManager:
         defaults = {}
         for provider in self.providers:
             provider_get_default_settings = provider.get_default_settings()
-            print (f"Provider: {provider_get_default_settings}")
+            # print (f"Provider: {provider_get_default_settings}")
             defaults.update(provider_get_default_settings)
         return defaults
     
