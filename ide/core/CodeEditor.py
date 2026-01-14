@@ -16,6 +16,8 @@ from PyQt6.QtCore import Qt, QRect, QSize
 
 from ide.core.SyntaxHighlighter import PythonHighlighter, PhpHighlighter
 from ide.core.SettingDescriptor import SettingsProvider, SettingDescriptor, SettingType
+from ide.core.CodeFolding import CodeFoldingManager
+
 
 """
 Main Code Editor Class
@@ -27,9 +29,9 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
     A custom QTextEdit widget with enhanced features for code editing.
     """
     
-    # ========================================================================
+    # =============================================================================
     # Settings Descriptors - Define what settings CodeEditor uses
-    # ========================================================================
+    # =============================================================================
     SETTINGS_DESCRIPTORS = [
         SettingDescriptor(
             key='editor_font_size',
@@ -87,6 +89,16 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             default=80,
             min_value=40,
             max_value=120,
+            section='Editor'
+        ),
+
+        # Code Folding
+        SettingDescriptor(
+            key='enable_code_folding',
+            label='Enable Code Folding',
+            setting_type=SettingType.BOOLEAN,
+            default=True,
+            description='Enable code folding for functions, classes, and blocks',
             section='Editor'
         ),
     ]
@@ -151,7 +163,20 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
     
         # Notify parent IDE whenever the document modified state changes
         self.textChanged.connect(self.on_text_changed)
-    
+
+        # Code folding manager (NEW!)
+        self.folding_manager = CodeFoldingManager(self)
+        
+        # Timer for debounced fold region updates
+        from PyQt6.QtCore import QTimer
+        self.fold_update_timer = QTimer()
+        self.fold_update_timer.setSingleShot(True)
+        self.fold_update_timer.timeout.connect(self._update_fold_regions)
+        
+        # Connect text changed to update folds (debounced)
+        self.textChanged.connect(self._schedule_fold_update)
+
+
         # Load file if provided
         if file_path:
             self.load_file(file_path)
@@ -160,110 +185,66 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         self.textChanged.connect(self._on_text_changed)
 
 
-    # def __init__(self, file_path=None, font_size=10, tab_width=4,
-                # show_line_numbers=True, gutter_width=10):
-        # """
-        # Initialize code editor
-
-        # Args:
-            # file_path: Path to file to load
-            # font_size: Font size in points
-            # tab_width: Tab width in spaces
-            # show_line_numbers: Show line numbers
-            # gutter_width: Gutter width (padding) in pixels between line numbers and text
-        # """
-        # super().__init__()
-
-        # # Font and styling
-        # font = QFont("Monospace", font_size)
-        # font.setStyleHint(QFont.StyleHint.TypeWriter)
-        # self.setFont(font)
-        # self.setStyleSheet(
-            # "QPlainTextEdit { background-color: #2B2B2B; color: #A9B7C6; border: none; }"
-        # )
-
-        # # Tab settings
-        # self.setTabStopDistance(
-            # QFontMetricsF(self.font()).horizontalAdvance(' ') * tab_width
-        # )
-
-        # # State
-        # self.file_path         = None
-        # self.highlighter       = None
-        # self.show_line_numbers = show_line_numbers
-        # self.gutter_width      = gutter_width
-        # self.tab_width         = tab_width
-
-        # # Track extra selections separately to avoid conflicts
-        # self.current_line_selection = None
-        # self.find_replace_selections = []
-
-        # # Line number area
-        # self.line_number_area = LineNumberArea(self) if show_line_numbers else None
-
-        # # Connect signals
-        # if self.line_number_area:
-            # self.blockCountChanged.connect(self.update_line_number_area_width)
-            # self.updateRequest.connect(self.update_line_number_area)
-
-        # # Connections for line numbers and highlighting
-        # self.blockCountChanged.connect(self.update_line_number_area_width)
-        # self.updateRequest.connect(self.update_line_number_area)
-        # self.cursorPositionChanged.connect(self.highlight_current_line)
-        # self.update_line_number_area_width(0)
-
-        # # Notify parent IDE whenever the document modified state changes
-        # self.textChanged.connect(self.on_text_changed)
-
-        # # Load file if provided
-        # if file_path:
-            # self.load_file(file_path)
-
-        # # Connect text changed signal for plugins
-        # self.textChanged.connect(self._on_text_changed)
-
-
     def _on_text_changed(self):
         """Notify plugins about text change"""
         # This allows plugins to hook into typing
         pass
 
-    # ------------------------------------------------------------------
+    # =============================================================================
     # Line Number Area
-    # ------------------------------------------------------------------
+    # =============================================================================
 
     def update_line_number_area_width(self, _):
-        """Update the viewport margins to accommodate line numbers + gutter"""
+        """
+        Update the viewport margins when line count changes.
+        This is called automatically by Qt when blockCountChanged signal fires.
+        """
         left_margin = self.line_number_area_width()
         self.setViewportMargins(left_margin, 0, 0, 0)
+        
+        # Also update the line number area geometry to match the new width
+        if self.line_number_area:
+            self.line_number_area.setGeometry(
+                QRect(
+                    self.contentsRect().left(),
+                    self.contentsRect().top(),
+                    left_margin,
+                    self.contentsRect().height()
+                )
+            )
+
+    # def update_line_number_area_width(self, _):
+        # """Update the viewport margins to accommodate line numbers + gutter"""
+        # left_margin = self.line_number_area_width()
+        # self.setViewportMargins(left_margin, 0, 0, 0)
 
     def line_number_area_width(self):
-        """Calculate the width needed for line numbers + gutter"""
+        """
+        Calculate the width needed for line numbers + gutter.
+        This dynamically adjusts based on the number of lines.
+        """
         if not self.show_line_numbers or not self.line_number_area:
             return self.gutter_width
+    
+        # Get the total number of lines
+        max_line = max(1, self.blockCount())
+        
+        # Calculate how many digits we need (e.g., 5 digits for line 20180)
+        digits = len(str(max_line))
+        
+        # Calculate total width needed:
+        # 16px for fold markers + (digit width * number of digits) + 3px padding + gutter
+        fold_marker_space = 16
+        digit_space = self.fontMetrics().horizontalAdvance('9') * digits
+        padding = 3
+        
+        total_width = fold_marker_space + digit_space + padding + self.gutter_width
+        
+        return total_width
 
-        digits = len(str(max(1, self.blockCount())))
-        space = 3 + self.fontMetrics().horizontalAdvance('9') * digits + self.gutter_width
-        return space
-
-    # def update_line_number_area(self, rect, dy):
-        # """Update the line number area when the editor scrolls or updates"""
-        # if not self.line_number_area:
-            # return
-
-        # if dy:
-            # self.line_number_area.scroll(0, dy)
-        # else:
-            # self.line_number_area.update(
-                # 0, rect.y(), self.line_number_area.width(), rect.height()
-            # )
-
-        # if rect.contains(self.viewport().rect()):
-            # self.update_line_number_area_width(0)
-
-    # ============================================================================
-    # update_line_number_area
-    # ============================================================================
+    # =============================================================================
+    # Update line number area
+    # =============================================================================
     
     def update_line_number_area(self, rect, dy):
         """Update the line number area when the editor scrolls or updates"""
@@ -280,7 +261,7 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         if rect.contains(self.viewport().rect()):
             self.update_line_number_area_width(0)
         
-        # ADD THIS: Update column marker when scrolling
+        # Update column marker when scrolling
         if hasattr(self, 'column_marker'):
             self.column_marker.update()
 
@@ -328,43 +309,30 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         )
 
     def resizeEvent(self, event):
-        """Handle resize events to update line number area and column marker"""
+        """
+        Handle resize events to update line number area and column marker.
+        This ensures the line number area always has the correct width.
+        """
         super().resizeEvent(event)
         
         # Update line number area
         if self.line_number_area:
             cr = self.contentsRect()
-            digits = len(str(max(1, self.blockCount())))
-            line_number_width = 3 + self.fontMetrics().horizontalAdvance('9') * digits
+            # Use our calculated width method
+            line_number_width = self.line_number_area_width()
             
             self.line_number_area.setGeometry(
                 QRect(cr.left(), cr.top(), line_number_width, cr.height())
             )
         
-        # ADD THIS: Update column marker
+        # Update column marker
         if hasattr(self, 'column_marker'):
             self.column_marker.setGeometry(self.viewport().geometry())
-            self.column_marker.raise_()  # Ensure it's on top
+            self.column_marker.raise_()
 
-
-    # def resizeEvent(self, event):
-        # """Handle resize events to update line number area"""
-        # super().resizeEvent(event)
-
-        # if not self.line_number_area:
-            # return
-
-        # cr = self.contentsRect()
-        # digits = len(str(max(1, self.blockCount())))
-        # line_number_width = 3 + self.fontMetrics().horizontalAdvance('9') * digits
-
-        # self.line_number_area.setGeometry(
-            # QRect(cr.left(), cr.top(), line_number_width, cr.height())
-        # )
-
-    # ============================================================================
+    # =============================================================================
     # Methods to toggle column marker visibility
-    # ============================================================================
+    # =============================================================================
     
     def set_show_column_marker(self, show):
         """
@@ -391,36 +359,54 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             self.column_marker.update()  # Trigger repaint
 
 
-    # ============================================================================
+    # =============================================================================
     # Line number area methods
-    # ============================================================================    
+    # =============================================================================
 
     def line_number_area_paint_event(self, event):
+        """
+        Paint line numbers and fold markers.
+        Now with proper width calculation for any number of digits.
+        """
         painter = QPainter(self.line_number_area)
         painter.fillRect(event.rect(), QColor("#313335"))
-
+        
         block = self.firstVisibleBlock()
-        block_number = block.blockNumber()
-        top = self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
-        bottom = top + self.blockBoundingRect(block).height()
-
-        height = self.fontMetrics().height()
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
-                number = str(block_number + 1)
+        
+        while block.isValid():
+            where_to_draw = self.blockBoundingGeometry(block).translated(self.contentOffset())
+            
+            if where_to_draw.top() > event.rect().bottom():
+                break
+            
+            if block.isVisible():
+                line_number = block.blockNumber() + 1
+                
+                # Draw line number
                 painter.setPen(QColor("#606366"))
+                
+                # Calculate available width for text (total width - fold marker space - padding)
+                available_width = self.line_number_area.width() - 16 - 3
+                
                 painter.drawText(
-                    0,
-                    int(top),
-                    self.line_number_area.width() - 3,
-                    height,
+                    16,  # Start after fold markers (16px)
+                    int(where_to_draw.top()),
+                    available_width,  # Use all available space
+                    self.fontMetrics().height(),
                     Qt.AlignmentFlag.AlignRight,
-                    number,
+                    str(line_number)
                 )
+                
+                # Draw fold marker
+                if self._is_folding_enabled():
+                    self.folding_manager.draw_fold_marker(
+                        painter,
+                        block.blockNumber(),
+                        int(where_to_draw.top()),
+                        self.fontMetrics().height()
+                    )
+            
             block = block.next()
-            top = bottom
-            bottom = top + self.blockBoundingRect(block).height()
-            block_number += 1
 
     def highlight_current_line(self):
         """Highlight the current line - works with extra selections"""
@@ -454,9 +440,9 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
 
         self.setExtraSelections(all_selections)
 
-    # ------------------------------------------------------------------
+    # =============================================================================
     # Modification tracking
-    # ------------------------------------------------------------------
+    # =============================================================================
     def on_text_changed(self):
         """Notify the main window when the document's modified state changes"""
         # Find the WorkspaceIDE instance
@@ -467,9 +453,9 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
                 break
             parent = parent.parent()
 
-    # ------------------------------------------------------------------
+    # =============================================================================
     # File operations
-    # ------------------------------------------------------------------
+    # =============================================================================
     def load_file(self, path: str) -> bool:
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -491,6 +477,12 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
                 self.highlighter = PhpHighlighter(self.document())
 
             self.document().setModified(False)
+
+            # Update fold regions for new file (NEW!)
+            if self._is_folding_enabled():
+                self.folding_manager.update_regions()
+            
+
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error loading file", str(e))
@@ -510,9 +502,9 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             QMessageBox.critical(self, "Error saving file", str(e))
             return False
 
-    # =====================================================================
+    # =============================================================================
     # Feature: Comment Toggle (Ctrl+/) - FIXED VERSION
-    # =====================================================================
+    # =============================================================================
     def toggle_comment(self):
         cursor = self.textCursor()
         comment_prefix = self.get_comment_prefix()
@@ -664,9 +656,9 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
 
         super().keyPressEvent(event)
 
-    # ============================================================================
+    # =============================================================================
     # Duplicate Line
-    # ============================================================================
+    # =============================================================================
 
     def duplicate_line_or_selection(self):
         """Duplicate the current line or selected text"""
@@ -717,49 +709,111 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             min(original_position, len(line_text))
         )
 
+    # ============================================================================
+    # Add fold update methods
+    # ============================================================================
+    
+    def _schedule_fold_update(self):
+        """Schedule a fold region update (debounced)"""
+        # Only update if folding is enabled
+        if self._is_folding_enabled():
+            # Delay update by 500ms to avoid updating on every keystroke
+            self.fold_update_timer.start(500)
+    
+    def _update_fold_regions(self):
+        """Update fold regions (called by timer)"""
+        if self._is_folding_enabled():
+            self.folding_manager.update_regions()
+            if self.line_number_area:
+                self.line_number_area.update()
+    
+    def _is_folding_enabled(self):
+        """Check if code folding is enabled in settings"""
+        # Walk up parent tree to find settings
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, 'settings_manager'):
+                return parent.settings_manager.get('enable_code_folding', True)
+            parent = parent.parent()
+        return True
+    
+
+
+# ============================================================================
+# LineNumberArea to handle mouse clicks
+# ============================================================================
+
+# ============================================================================
+# LineNumberArea to handle mouse clicks - COMPLETE FIXED VERSION
+# ============================================================================
 
 class LineNumberArea(QWidget):
     def __init__(self, editor):
-        """
-        Initialize the LineNumberArea with the given editor instance.
-
-        Args:
-            editor (QTextEdit or QPlainTextEdit): The main text editor widget that displays the code.  
-                This widget is used to synchronize line numbers with the content of the editor.
-
-        Notes:
-            - The `editor` is passed to the parent class constructor to establish the widget hierarchy.
-            - This method sets up the foundational configuration for line number display.
-        """
         super().__init__(editor)
         self.editor = editor
-
+        
+        # Enable mouse tracking
+        self.setMouseTracking(True)
+    
     def sizeHint(self):
-        """
-        Returns the size hint for the LineNumberArea widget.
-
-        This method provides a suggested size for the LineNumberArea, with the width
-        determined by the editor's line number area width. The height is set to 0,
-        as the vertical size is typically managed by the parent layout or the editor's
-        content height.
-
-        Returns:
-            QSize: A size with the calculated width and 0 height.
-        """
         return QSize(self.editor.line_number_area_width(), 0)
-
+    
     def paintEvent(self, event):
-        """
-        Handle the paint event for the line number area by delegating to the editor's paint method.
-
-        This method is called when the line number area needs to be repainted. It forwards the paint event
-        to the associated editor's `line_number_area_paint_event` method to ensure the line numbers
-        are correctly rendered.
-
-        :param event: The QPaintEvent containing information about the painting operation.
-        :type event: PyQt6.QtWidgets.QPaint, QPaintEvent
-        """
         self.editor.line_number_area_paint_event(event)
+    
+    # Matching simple version for mouse clicks
+    def mousePressEvent(self, event):
+        """Handle clicks on fold markers - ULTRA SIMPLE VERSION"""
+        from PyQt6.QtCore import Qt
+        
+        # Only care about left clicks
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        
+        # Only if folding is enabled
+        if not self.editor._is_folding_enabled():
+            return
+        
+        # Where did they click?
+        click_y = event.pos().y()
+        click_x = event.pos().x()
+        
+        # Go through each block to find which one they clicked
+        block = self.editor.firstVisibleBlock()
+        
+        while block.isValid():
+            # Ask Qt where this block is drawn
+            where_is_block = self.editor.blockBoundingGeometry(block).translated(
+                self.editor.contentOffset()
+            )
+            
+            # Is the click on this block?
+            if block.isVisible():
+                if where_is_block.top() <= click_y <= where_is_block.bottom():
+                    # They clicked this line!
+                    
+                    # Was it on the fold marker? (left 14 pixels)
+                    if click_x < 14:
+                        self.editor.folding_manager.toggle_fold_at_line(block.blockNumber())
+                    return
+            
+            # Try next block
+            block = block.next()
+    
+    
+    # Also add this to the LineNumberArea class for the cursor change
+    def mouseMoveEvent(self, event):
+        """Change cursor when hovering over fold markers"""
+        from PyQt6.QtCore import Qt
+        
+        if not self.editor._is_folding_enabled():
+            return
+        
+        # Show pointing hand cursor over fold markers
+        if event.pos().x() < 14:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
 
 
 class ColumnMarker(QWidget):
@@ -839,4 +893,3 @@ class ColumnMarker(QWidget):
             'show_column_marker': True,
             'column_marker_position': 80
         }
-

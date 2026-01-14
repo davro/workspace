@@ -447,11 +447,43 @@ class Workspace(QMainWindow, SettingsProvider):
             ("Shift+F3", self.find_previous),
             ("Ctrl+Tab", self.show_tab_switcher),
             ("Ctrl+Shift+Tab", self.cycle_tabs_backward),
+            # Folding 
+            ("Ctrl+Shift+[", self.fold_current),
+            ("Ctrl+Shift+]", self.unfold_current),
+            ("Ctrl+K, Ctrl+0", self.fold_all),
+            ("Ctrl+K, Ctrl+J", self.unfold_all),
+            # Folding (new)
+            # ("Ctrl+Shift+[", self.fold_current),
+            # ("Ctrl+Shift+]", self.unfold_current),
+            # ("Alt+0", self.fold_all),
+            # ("Alt+J", self.unfold_all),
         ]
 
         for key, callback in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(callback)
+
+    def fold_current(self):
+        editor = self.get_current_editor()
+        if isinstance(editor, CodeEditor):
+            cursor = editor.textCursor()
+            line = cursor.blockNumber()
+            editor.folding_manager.toggle_fold_at_line(line)
+    
+    def unfold_current(self):
+        self.fold_current()  # Toggle works both ways
+    
+    def fold_all(self):
+        editor = self.get_current_editor()
+        if isinstance(editor, CodeEditor):
+            editor.folding_manager.fold_all()
+    
+    def unfold_all(self):
+        editor = self.get_current_editor()
+        if isinstance(editor, CodeEditor):
+            editor.folding_manager.unfold_all()
+
+
 
     def split_editor_vertical(self):
         self.split_manager.split_vertical()
@@ -729,20 +761,31 @@ class Workspace(QMainWindow, SettingsProvider):
 
         menu = QMenu(self)
 
-        # ai_menu = menu.addMenu("🤖 AI Actions")
-        # send_all_action = ai_menu.addAction("Send Entire File to Ollama")
-        # send_selection_action = ai_menu.addAction("Send Selection to Ollama")
-        # menu.addSeparator()
-
-        copy_path_action = menu.addAction("📋 Copy File Path")
-        copy_relative_path_action = menu.addAction("📋 Copy Relative Path")
-        menu.addSeparator()
-
+        # Save Actions
         save_action = menu.addAction("💾 Save")
         close_action = menu.addAction("✖️ Close")
         close_others_action = menu.addAction("Close Others")
         close_all_action = menu.addAction("Close All")
 
+        # Copy Paths
+        copy_path_action = menu.addAction("📋 Copy File Path")
+        copy_relative_path_action = menu.addAction("📋 Copy Relative Path")
+        menu.addSeparator()
+
+        # Code Folding
+        fold_menu = menu.addMenu("Folding")
+        fold_menu.addAction("Fold", self.fold_current)
+        fold_menu.addAction("Unfold", self.unfold_current)
+        fold_menu.addSeparator()
+        fold_menu.addAction("Fold All", self.fold_all)
+        fold_menu.addAction("Unfold All", self.unfold_all)
+
+        # ai_menu = menu.addMenu("🤖 AI Actions")
+        # send_all_action = ai_menu.addAction("Send Entire File to Ollama")
+        # send_selection_action = ai_menu.addAction("Send Selection to Ollama")
+        # menu.addSeparator()
+
+        # Menu Actions
         action = menu.exec(self.tabs.tabBar().mapToGlobal(position))
 
         # Handlers

@@ -10,12 +10,13 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtCore import Qt, QRegularExpression
 
-from ide.core.SettingDescriptor import SettingType, SettingsProvider, SettingDescriptor
+from ide.core.SettingDescriptor import (
+    SettingType, SettingsProvider, SettingDescriptor
+)
 
 
 class FindReplaceWidget(QFrame, SettingsProvider):
     """Find and Replace panel widget"""
-
     SETTINGS_DESCRIPTORS = [
         SettingDescriptor(
             key='find_replace_contents_margins',
@@ -28,25 +29,6 @@ class FindReplaceWidget(QFrame, SettingsProvider):
             description='Layout Contents Margins',
             section='Find Replace'
         ),
-        # SettingDescriptor(
-            # key='settings_minimum_height',
-            # label='Minimum Height',
-            # setting_type=SettingType.INTEGER,
-            # default=800,
-            # min_value=800,
-            # max_value=1300,
-            # suffix=' px',
-            # description='Minimum Height of the file settings dialog panel',
-            # section='Settings'
-        # ),
-        # SettingDescriptor(
-            # key='settings_model',
-            # label='Model',
-            # setting_type=SettingType.BOOLEAN,
-            # default=True,
-            # description='Model True / False',
-            # section='Settings'
-        # ),
     ]
 
     def __init__(self, settings_manager, parent=None):
