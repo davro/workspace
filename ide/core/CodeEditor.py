@@ -103,7 +103,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         ),
     ]
 
-
     def __init__(self, file_path=None, font_size=10, tab_width=4,
                  show_line_numbers=True, gutter_width=10):
         """
@@ -188,7 +187,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         # Connect text changed signal for plugins
         self.textChanged.connect(self._on_text_changed)
 
-
     def _on_text_changed(self):
         """Notify plugins about text change"""
         # This allows plugins to hook into typing
@@ -243,30 +241,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         total_width = fold_marker_space + digit_space + padding + self.gutter_width
         
         return total_width
-
-    # def line_number_area_width(self):
-        # """
-        # Calculate the width needed for line numbers + gutter.
-        # This dynamically adjusts based on the number of lines.
-        # """
-        # if not self.show_line_numbers or not self.line_number_area:
-            # return self.gutter_width
-    
-        # # Get the total number of lines
-        # max_line = max(1, self.blockCount())
-        
-        # # Calculate how many digits we need (e.g., 5 digits for line 20180)
-        # digits = len(str(max_line))
-        
-        # # Calculate total width needed:
-        # # 16px for fold markers + (digit width * number of digits) + 3px padding + gutter
-        # fold_marker_space = 16
-        # digit_space = self.fontMetrics().horizontalAdvance('9') * digits
-        # padding = 3
-        
-        # total_width = fold_marker_space + digit_space + padding + self.gutter_width
-        
-        # return total_width
 
     # =============================================================================
     # Update line number area
@@ -372,8 +346,7 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
                 self.column_marker.show()
             else:
                 self.column_marker.hide()
-    
-    
+
     def set_column_marker_position(self, position):
         """
         Set the column marker position.
@@ -383,7 +356,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         """
         if hasattr(self, 'column_marker'):
             self.column_marker.update()  # Trigger repaint
-
 
     # =============================================================================
     # Line number area methods
@@ -522,41 +494,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             QMessageBox.critical(self, "Error loading file", str(e))
             return False
 
-    # def load_file(self, path: str) -> bool:
-        # try:
-            # with open(path, "r", encoding="utf-8") as f:
-                # content = f.read()
-
-            # # Prevent textChanged signals during load
-            # self.blockSignals(True)
-            # self.setPlainText(content)
-            # self.blockSignals(False)
-
-            # self.file_path = path
-
-            # # Python Apply syntax highlighting
-            # if str(path).lower().endswith(".py"):
-                # self.highlighter = PythonHighlighter(self.document())
-
-            # # PHP Apply syntax highlighting
-            # if str(path).lower().endswith(".php"):
-                # self.highlighter = PhpHighlighter(self.document())
-
-            # self.document().setModified(False)
-
-            # # Update fold regions for new file (NEW!)
-            # if self._is_folding_enabled():
-                # self.folding_manager.update_regions()
-            
-            # # Start monitoring file for external changes (NEW!)
-            # if self.file_monitor:
-                # self.file_monitor.watch_file(path)
-
-            # return True
-        # except Exception as e:
-            # QMessageBox.critical(self, "Error loading file", str(e))
-            # return False
-
     def save_file(self) -> bool:
         if not self.file_path:
             return False
@@ -576,7 +513,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             QMessageBox.critical(self, "Error saving file", str(e))
             return False
 
-
     # =============================================================================
     # Feature: File Monitoring (handle external changes)
     # =============================================================================
@@ -593,7 +529,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         if monitor:
             monitor.file_modified.connect(self._on_external_file_modified)
             monitor.file_deleted.connect(self._on_external_file_deleted)
-    
     
     def _on_external_file_modified(self, file_path: str):
         """
@@ -613,8 +548,7 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         
         # Prompt user to reload
         self._prompt_reload_file()
-    
-    
+
     def _on_external_file_deleted(self, file_path: str):
         """
         Handle external file deletion.
@@ -640,8 +574,7 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         if result == QMessageBox.StandardButton.No:
             # Close the editor
             self._close_editor()
-    
-    
+
     def _prompt_reload_file(self):
         """Prompt user to reload file after external modification"""
         msg = QMessageBox(self)
@@ -661,8 +594,7 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         else:
             # User chose not to reload - mark as modified
             self.document().setModified(True)
-    
-    
+
     def _reload_file(self):
         """Reload file from disk"""
         if not self.file_path or not Path(self.file_path).exists():
@@ -694,8 +626,7 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             
         except Exception as e:
             QMessageBox.critical(self, "Error reloading file", str(e))
-    
-    
+
     def _close_editor(self):
         """Close this editor (notify workspace)"""
         # Find the workspace and ask it to close this editor
@@ -705,7 +636,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
                 parent.close_editor(self)
                 break
             parent = parent.parent()
-    
 
     # Add check for pending changes when user tries to save:
     def check_external_changes_before_save(self) -> bool:
@@ -745,8 +675,7 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             return False
         else:
             return False
-    
-    
+
     def _show_external_changes(self):
         """Show what changed externally (simple version)"""
         msg = QMessageBox(self)
@@ -890,7 +819,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
                         block_cursor.removeSelectedText()
 
         cursor.endEditBlock()
-
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Tab and not event.modifiers():

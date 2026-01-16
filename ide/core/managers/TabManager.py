@@ -167,4 +167,3 @@ class TabManager:
         """Get the currently active editor"""
         widget = self.tabs.currentWidget()
         return widget if isinstance(widget, CodeEditor) else None
-

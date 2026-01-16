@@ -219,7 +219,6 @@ class DocumentDialog(QDialog):
                 f"<p><code>{str(e)}</code></p>"
             )
 
-
     def markdown_to_html(self, markdown_text):
         """Convert markdown to HTML using markdown library with better list handling"""
         try:
@@ -246,4 +245,3 @@ class DocumentDialog(QDialog):
                 <pre><code>pip install markdown</code></pre>
                 <p>After installation, restart the IDE and try again.</p>
             """
-
