@@ -13,8 +13,8 @@ from pathlib import Path
 
 # Import PyQt6 classes
 from PyQt6.QtWidgets import (
-    QMainWindow, QApplication, QWidget, QMenu, QVBoxLayout, QHBoxLayout, 
-    QSplitter, QTabWidget, QTreeView, QLabel, QMessageBox, QDialog, 
+    QMainWindow, QApplication, QWidget, QMenu, QVBoxLayout, QHBoxLayout,
+    QSplitter, QTabWidget, QTreeView, QLabel, QMessageBox, QDialog,
     QInputDialog, QSpacerItem, QGridLayout
 )
 
@@ -38,6 +38,7 @@ from ide.core.CodeEditor import CodeEditor
 from ide.core.DragDropTreeView import DragDropTreeView
 from ide.core.CombinedTreeDelegate import CombinedTreeDelegate
 from ide.core.OutlineWidget import OutlineWidget
+from ide.core.FileMonitor import FileMonitor
 
 # Import IDE Core managers classes
 from ide.core.managers.FileManager import FileManager
@@ -127,6 +128,9 @@ class Workspace(QMainWindow, SettingsProvider):
         self.quick_open_cache_projects = set()
         self.quick_open_cache_time = 0
 
+        # Create file monitor (NEW!)
+        self.file_monitor = FileMonitor()
+
         # Initialize managers
         self.settings_manager = SettingsManager(self.config_file)
 
@@ -193,7 +197,7 @@ class Workspace(QMainWindow, SettingsProvider):
         self.auto_save_timer = QTimer(self)
         self.auto_save_timer.timeout.connect(self.auto_save_session)
         self.auto_save_timer.start(30000)
-        
+
         # Track if session needs saving (optimization)
         self.session_dirty = False
 
@@ -203,17 +207,17 @@ class Workspace(QMainWindow, SettingsProvider):
     def apply_settings(self):
         """
         Apply current settings to workspace components.
-        
+
         This method is called:
         - During initialization (__init__)
         - After user changes settings in the settings dialog
         - When settings are programmatically updated
         """
-        
+
         # ========================================================================
         # Layout Settings (from Workspace SETTINGS_DESCRIPTORS)
         # ========================================================================
-        
+
         # Explorer Width
         explorer_width = self.settings_manager.get('explorer_width', 300)
         if hasattr(self, 'main_splitter'):
@@ -226,32 +230,32 @@ class Workspace(QMainWindow, SettingsProvider):
                     total = sum(sizes)
                     remaining = total - explorer_width
                     self.main_splitter.setSizes([explorer_width, remaining, 0])
-        
+
         # Terminal Height (not currently used, but ready for when you add terminal)
         terminal_height = self.settings_manager.get('terminal_height', 200)
         if hasattr(self, 'terminal') and self.terminal is not None:
             self.terminal.setFixedHeight(terminal_height)
-        
+
         # ========================================================================
         # General Settings (from Workspace SETTINGS_DESCRIPTORS)
         # ========================================================================
-        
+
         # Restore Session - only affects startup, cache the value
         self._restore_session = self.settings_manager.get('restore_session', True)
-        
+
         # Auto-save on Tab Switch - cache for quick access
         self._auto_save_enabled = self.settings_manager.get('auto_save', False)
-        
+
         # ========================================================================
         # Editor Settings (from CodeEditor - when you implement it)
         # Apply to all open editors
         # ========================================================================
-        
+
         editor_font_size = self.settings_manager.get('editor_font_size', 10)
         tab_width = self.settings_manager.get('tab_width', 4)
         show_line_numbers = self.settings_manager.get('show_line_numbers', True)
         gutter_width = self.settings_manager.get('gutter_width', 10)
-        
+
         # Apply to all tabs in the current tab widget
         if hasattr(self, 'tabs'):
             for i in range(self.tabs.count()):
@@ -266,7 +270,7 @@ class Workspace(QMainWindow, SettingsProvider):
                         editor.set_show_line_numbers(show_line_numbers)
                     if hasattr(editor, 'set_gutter_width'):
                         editor.set_gutter_width(gutter_width)
-        
+
         # If using split editor manager, apply to all groups
         if hasattr(self, 'split_manager'):
             for editor in self.split_manager.get_all_editors():
@@ -279,7 +283,7 @@ class Workspace(QMainWindow, SettingsProvider):
                         editor.set_show_line_numbers(show_line_numbers)
                     if hasattr(editor, 'set_gutter_width'):
                         editor.set_gutter_width(gutter_width)
-    
+
     def should_restore_session(self):
         """Check if we should restore the session on startup"""
         if hasattr(self, '_restore_session'):
@@ -371,7 +375,7 @@ class Workspace(QMainWindow, SettingsProvider):
     def handle_file_moved(self, old_path: str, new_path: str):
         """
         Handle when a file is moved - update open tabs
-    
+
         Args:
             old_path: Original file path
             new_path: New file path
@@ -382,15 +386,15 @@ class Workspace(QMainWindow, SettingsProvider):
             if isinstance(editor, CodeEditor) and hasattr(editor, 'file_path') and editor.file_path == old_path:
                 # Update the file path
                 editor.file_path = new_path
-    
+
                 # Update tab title
                 new_name = Path(new_path).name
                 self.tabs.setTabText(i, new_name)
                 self.tabs.setTabToolTip(i, new_path)
-    
+
                 # Show notification
                 self.status_message.setText(f"Updated tab: {new_name}")
-                
+
                 # Mark session dirty
                 self.mark_session_dirty()
 
@@ -415,7 +419,7 @@ class Workspace(QMainWindow, SettingsProvider):
         self.tabs.setMovable(True)
 
         # BUG CLOSES MUTIPLE TABS AFTER TAB CLOSE
-        #self.tabs.tabCloseRequested.connect(lambda idx: self.tab_manager.close_tab(idx)) 
+        #self.tabs.tabCloseRequested.connect(lambda idx: self.tab_manager.close_tab(idx))
 
         self.tabs.currentChanged.connect(self.on_editor_tab_changed)
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -425,17 +429,17 @@ class Workspace(QMainWindow, SettingsProvider):
 
     def _create_right_sidebar(self):
         """Create right sidebar with Outline (AI moved to plugin)"""
-    
+
         # Create tab widget for right sidebar
         right_tabs = QTabWidget()
         right_tabs.setMinimumWidth(300)
-    
+
         # Outline tab
         self.outline_widget = OutlineWidget(parent=self)
         right_tabs.addTab(self.outline_widget, "📋 Outline")
 
         self.main_splitter.addWidget(right_tabs)
-        
+
         # Store reference for plugins to use
         self.right_sidebar = right_tabs
 
@@ -447,7 +451,7 @@ class Workspace(QMainWindow, SettingsProvider):
             ("Shift+F3", self.find_previous),
             ("Ctrl+Tab", self.show_tab_switcher),
             ("Ctrl+Shift+Tab", self.cycle_tabs_backward),
-            # Folding 
+            # Folding
             ("Ctrl+Shift+[", self.fold_current),
             ("Ctrl+Shift+]", self.unfold_current),
             ("Ctrl+K, Ctrl+0", self.fold_all),
@@ -469,15 +473,15 @@ class Workspace(QMainWindow, SettingsProvider):
             cursor = editor.textCursor()
             line = cursor.blockNumber()
             editor.folding_manager.toggle_fold_at_line(line)
-    
+
     def unfold_current(self):
         self.fold_current()  # Toggle works both ways
-    
+
     def fold_all(self):
         editor = self.get_current_editor()
         if isinstance(editor, CodeEditor):
             editor.folding_manager.fold_all()
-    
+
     def unfold_all(self):
         editor = self.get_current_editor()
         if isinstance(editor, CodeEditor):
@@ -588,11 +592,11 @@ class Workspace(QMainWindow, SettingsProvider):
                 self.on_editor_modified(current_widget)
                 self.status_message.setText("File saved")
                 QTimer.singleShot(2000, lambda: self.status_message.setText(""))
-    
+
                 # Trigger plugin hook
                 if hasattr(current_widget, 'file_path') and current_widget.file_path:
                     self.trigger_file_saved(current_widget.file_path)
-                
+
                 # Refresh outline after save
                 if hasattr(self, 'outline_widget'):
                     self.outline_widget.refresh_outline()
@@ -608,11 +612,11 @@ class Workspace(QMainWindow, SettingsProvider):
                         editor.document().setModified(False)
                         self.on_editor_modified(editor)
                         saved_count += 1
-    
+
             if saved_count > 0:
                 self.status_message.setText(f"Saved {saved_count} file(s)")
                 QTimer.singleShot(3000, lambda: self.status_message.setText(""))
-                
+
                 # Refresh outline for current editor
                 if hasattr(self, 'outline_widget'):
                     current_editor = self.get_current_editor()
@@ -627,8 +631,8 @@ class Workspace(QMainWindow, SettingsProvider):
         if self.tabs.count() > 0:
             self.tab_manager.close_tab(self.tabs.currentIndex())
             self.mark_session_dirty()
-    
-    
+
+
     def close_all_tabs(self):
         """Close all tabs"""
         self.tab_manager.close_all_tabs()
@@ -823,10 +827,10 @@ class Workspace(QMainWindow, SettingsProvider):
                 p,
                 self.settings_manager.settings
             )
-    
+
             # Trigger plugin hook
             self.trigger_file_opened(str(p))
-            
+
             # Mark session dirty
             self.mark_session_dirty()
 
@@ -839,35 +843,35 @@ class Workspace(QMainWindow, SettingsProvider):
         if index >= 0:
             # Track tab access
             self.tab_order_manager.record_access(index)
-    
+
             editor = self.tabs.widget(index)
             if isinstance(editor, CodeEditor):
                 self.find_replace.set_editor(editor)
                 self.statusbar_manager.update_file_info(editor)
-    
+
                 # Disconnect any existing connections first
                 try:
                     editor.cursorPositionChanged.disconnect()
                 except:
                     pass
-    
+
                 # Connect cursor position updates
                 editor.cursorPositionChanged.connect(
                     lambda: self.statusbar_manager.update_cursor_position(editor)
                 )
-    
+
                 # Connect cursor hook
                 editor.cursorPositionChanged.connect(
                     lambda: self._on_cursor_position_changed(editor)
                 )
-    
+
                 # Update outline when tab changes
                 if hasattr(self, 'outline_widget'):
                     self.outline_widget.set_editor(editor)
-    
+
                 # Trigger focus hook
                 self.trigger_editor_focus(editor)
-                
+
                 # Mark session as dirty
                 self.mark_session_dirty()
 
@@ -1034,7 +1038,7 @@ class Workspace(QMainWindow, SettingsProvider):
     def toggle_right_sidebar(self):
         """Toggle right sidebar visibility"""
         right_sidebar = self.main_splitter.widget(2)
-        
+
         if right_sidebar.isVisible():
             right_sidebar.hide()
         else:
@@ -1195,18 +1199,18 @@ class Workspace(QMainWindow, SettingsProvider):
     # ============================================================================
     # Status Message Helper Methods (keep these)
     # ============================================================================
-    
+
     def show_status_message(self, message: str, timeout: int = 3000):
         """
         Show a status bar message
-        
+
         Args:
             message: Message to display
             timeout: Time in milliseconds before clearing (0 = don't clear)
         """
         if hasattr(self, 'status_message'):
             self.status_message.setText(message)
-        
+
         if timeout > 0:
             QTimer.singleShot(timeout, lambda: self.clear_status_message())
 
@@ -1214,23 +1218,23 @@ class Workspace(QMainWindow, SettingsProvider):
         """Clear the status bar message"""
         if hasattr(self, 'status_message'):
             self.status_message.setText("")
-    
+
     # ============================================================================
     # Settings Dialog Method
     # ============================================================================
-    
+
     def show_settings(self):
         """Show settings dialog and apply changes"""
         dialog = SettingsDialog(self.settings_manager, parent=self)
-        
+
         if dialog.exec():
             new_settings = dialog.get_settings()
             self.settings_manager.update(new_settings)
             self.settings_manager.save()
-            
+
             # Apply settings immediately
             self.apply_settings()
-            
+
             # Show confirmation
             self.show_status_message("Settings saved and applied", 3000)
 
@@ -1484,6 +1488,11 @@ class Workspace(QMainWindow, SettingsProvider):
     def closeEvent(self, event):
         """Handle application close"""
 
+        # *** NEW: Stop monitoring all files ***
+        if hasattr(self, 'file_monitor'):
+            for file_path in list(self.file_monitor.get_watched_files()):
+                self.file_monitor.unwatch_file(file_path)
+
         # Cleanup outline widget
         if hasattr(self, 'outline_widget'):
             self.outline_widget.cleanup()
@@ -1546,7 +1555,7 @@ class Workspace(QMainWindow, SettingsProvider):
         if self.settings_manager.get('restore_session', True) and self.session_dirty:
             self.session_manager.save_session(self.tabs, self.main_splitter)
             self.session_dirty = False
-    
+
     def mark_session_dirty(self):
         """Mark session as needing save"""
         self.session_dirty = True

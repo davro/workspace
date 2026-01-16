@@ -719,7 +719,32 @@ class PluginAPI:
     # ============================================================================
     # ADD THESE METHODS TO PluginAPI CLASS
     # ============================================================================
+
     
+    # def add_to_right_sidebar(self, widget, title: str, icon: str = "") -> bool:
+        # """
+        # Add a plugin widget to the right sidebar
+        
+        # Args:
+            # widget: QWidget to add as a tab
+            # title: Tab title
+            # icon: Optional emoji/icon prefix
+        
+        # Returns:
+            # bool: True if added successfully
+        
+        # Example:
+            # >>> widget = MyPluginWidget()
+            # >>> api.add_to_right_sidebar(widget, "My Tool", "🔧")
+        # """
+        # if hasattr(self.ide, 'right_sidebar'):
+            # tab_title = f"{icon} {title}" if icon else title
+            # index = self.ide.right_sidebar.addTab(widget, tab_title)
+            # return True
+        
+        # print(f"[PluginAPI] Warning: right_sidebar not found in IDE")
+        # return False
+
     def add_to_right_sidebar(self, widget, title: str, icon: str = "") -> bool:
         """
         Add a plugin widget to the right sidebar
@@ -736,14 +761,31 @@ class PluginAPI:
             >>> widget = MyPluginWidget()
             >>> api.add_to_right_sidebar(widget, "My Tool", "🔧")
         """
-        if hasattr(self.ide, 'right_sidebar'):
-            tab_title = f"{icon} {title}" if icon else title
-            index = self.ide.right_sidebar.addTab(widget, tab_title)
-            return True
+        if not hasattr(self.ide, 'right_sidebar'):
+            print(f"[PluginAPI] Warning: right_sidebar not found in IDE")
+            return False
         
-        print(f"[PluginAPI] Warning: right_sidebar not found in IDE")
-        return False
-    
+        sidebar = self.ide.right_sidebar
+        tab_title = f"{icon} {title}" if icon else title
+        
+        # **FIX: Check if tab already exists and remove it**
+        for i in range(sidebar.count()):
+            existing_title = sidebar.tabText(i)
+            # Match by title (with or without icon)
+            if existing_title == tab_title or existing_title.endswith(title):
+                print(f"[PluginAPI] Removing duplicate tab: {existing_title}")
+                old_widget = sidebar.widget(i)
+                sidebar.removeTab(i)
+                # Clean up old widget
+                if old_widget:
+                    old_widget.deleteLater()
+                break
+        
+        # Add the new tab
+        index = sidebar.addTab(widget, tab_title)
+        print(f"[PluginAPI] Added tab to right sidebar: {tab_title} (index {index})")
+        return True    
+
     
     def remove_from_right_sidebar(self, widget) -> bool:
         """

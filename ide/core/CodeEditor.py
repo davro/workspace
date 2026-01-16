@@ -17,7 +17,7 @@ from PyQt6.QtCore import Qt, QRect, QSize
 from ide.core.SyntaxHighlighter import PythonHighlighter, PhpHighlighter
 from ide.core.SettingDescriptor import SettingsProvider, SettingDescriptor, SettingType
 from ide.core.CodeFolding import CodeFoldingManager
-
+from ide.core.FileMonitor import FileMonitor
 
 """
 Main Code Editor Class
@@ -118,6 +118,10 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         """
         super().__init__()
     
+        # File monitoring (NEW!)
+        self.file_monitor = None  # Will be set by workspace
+        self.external_change_pending = False
+
         # Font and styling
         font = QFont("Monospace", font_size)
         font.setStyleHint(QFont.StyleHint.TypeWriter)
@@ -213,11 +217,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
                 )
             )
 
-    # def update_line_number_area_width(self, _):
-        # """Update the viewport margins to accommodate line numbers + gutter"""
-        # left_margin = self.line_number_area_width()
-        # self.setViewportMargins(left_margin, 0, 0, 0)
-
     def line_number_area_width(self):
         """
         Calculate the width needed for line numbers + gutter.
@@ -232,6 +231,9 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         # Calculate how many digits we need (e.g., 5 digits for line 20180)
         digits = len(str(max_line))
         
+        # Always reserve space for at least 2 digits to prevent shifting
+        digits = max(2, digits)
+        
         # Calculate total width needed:
         # 16px for fold markers + (digit width * number of digits) + 3px padding + gutter
         fold_marker_space = 16
@@ -241,6 +243,30 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         total_width = fold_marker_space + digit_space + padding + self.gutter_width
         
         return total_width
+
+    # def line_number_area_width(self):
+        # """
+        # Calculate the width needed for line numbers + gutter.
+        # This dynamically adjusts based on the number of lines.
+        # """
+        # if not self.show_line_numbers or not self.line_number_area:
+            # return self.gutter_width
+    
+        # # Get the total number of lines
+        # max_line = max(1, self.blockCount())
+        
+        # # Calculate how many digits we need (e.g., 5 digits for line 20180)
+        # digits = len(str(max_line))
+        
+        # # Calculate total width needed:
+        # # 16px for fold markers + (digit width * number of digits) + 3px padding + gutter
+        # fold_marker_space = 16
+        # digit_space = self.fontMetrics().horizontalAdvance('9') * digits
+        # padding = 3
+        
+        # total_width = fold_marker_space + digit_space + padding + self.gutter_width
+        
+        # return total_width
 
     # =============================================================================
     # Update line number area
@@ -460,47 +486,279 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
-
+    
             # Prevent textChanged signals during load
             self.blockSignals(True)
             self.setPlainText(content)
             self.blockSignals(False)
-
+    
             self.file_path = path
-
+    
             # Python Apply syntax highlighting
             if str(path).lower().endswith(".py"):
                 self.highlighter = PythonHighlighter(self.document())
-
+    
             # PHP Apply syntax highlighting
             if str(path).lower().endswith(".php"):
                 self.highlighter = PhpHighlighter(self.document())
-
+    
             self.document().setModified(False)
-
-            # Update fold regions for new file (NEW!)
+    
+            # **FIX: Force update line number area width after loading**
+            self.update_line_number_area_width(0)
+            if self.line_number_area:
+                self.line_number_area.update()
+    
+            # Update fold regions for new file
             if self._is_folding_enabled():
                 self.folding_manager.update_regions()
             
-
+            # Start monitoring file for external changes
+            if self.file_monitor:
+                self.file_monitor.watch_file(path)
+    
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error loading file", str(e))
             return False
+
+    # def load_file(self, path: str) -> bool:
+        # try:
+            # with open(path, "r", encoding="utf-8") as f:
+                # content = f.read()
+
+            # # Prevent textChanged signals during load
+            # self.blockSignals(True)
+            # self.setPlainText(content)
+            # self.blockSignals(False)
+
+            # self.file_path = path
+
+            # # Python Apply syntax highlighting
+            # if str(path).lower().endswith(".py"):
+                # self.highlighter = PythonHighlighter(self.document())
+
+            # # PHP Apply syntax highlighting
+            # if str(path).lower().endswith(".php"):
+                # self.highlighter = PhpHighlighter(self.document())
+
+            # self.document().setModified(False)
+
+            # # Update fold regions for new file (NEW!)
+            # if self._is_folding_enabled():
+                # self.folding_manager.update_regions()
+            
+            # # Start monitoring file for external changes (NEW!)
+            # if self.file_monitor:
+                # self.file_monitor.watch_file(path)
+
+            # return True
+        # except Exception as e:
+            # QMessageBox.critical(self, "Error loading file", str(e))
+            # return False
 
     def save_file(self) -> bool:
         if not self.file_path:
             return False
 
         try:
+            # Notify monitor we're saving (NEW!)
+            if self.file_monitor:
+                self.file_monitor.mark_file_saving(self.file_path)
+            
             with open(self.file_path, "w", encoding="utf-8") as f:
                 f.write(self.toPlainText())
 
             self.document().setModified(False)
+            self.external_change_pending = False  # Clear flag after save
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error saving file", str(e))
             return False
+
+
+    # =============================================================================
+    # Feature: File Monitoring (handle external changes)
+    # =============================================================================
+    def set_file_monitor(self, monitor: FileMonitor):
+        """
+        Set the file monitor and connect signals.
+        
+        Args:
+            monitor: FileMonitor instance from workspace
+        """
+        self.file_monitor = monitor
+        
+        # Connect signals
+        if monitor:
+            monitor.file_modified.connect(self._on_external_file_modified)
+            monitor.file_deleted.connect(self._on_external_file_deleted)
+    
+    
+    def _on_external_file_modified(self, file_path: str):
+        """
+        Handle external file modification.
+        
+        Args:
+            file_path: Path to the modified file
+        """
+        # Only handle if this is our file
+        if file_path != self.file_path:
+            return
+        
+        # Don't prompt if we have unsaved changes - just mark it
+        if self.document().isModified():
+            self.external_change_pending = True
+            return
+        
+        # Prompt user to reload
+        self._prompt_reload_file()
+    
+    
+    def _on_external_file_deleted(self, file_path: str):
+        """
+        Handle external file deletion.
+        
+        Args:
+            file_path: Path to the deleted file
+        """
+        if file_path != self.file_path:
+            return
+        
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("File Deleted")
+        msg.setText(f"The file has been deleted externally:\n{Path(file_path).name}")
+        msg.setInformativeText("Do you want to keep the editor open?")
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+        
+        result = msg.exec()
+        
+        if result == QMessageBox.StandardButton.No:
+            # Close the editor
+            self._close_editor()
+    
+    
+    def _prompt_reload_file(self):
+        """Prompt user to reload file after external modification"""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("File Changed")
+        msg.setText(f"The file has been modified externally:\n{Path(self.file_path).name}")
+        msg.setInformativeText("Do you want to reload it?")
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+        
+        result = msg.exec()
+        
+        if result == QMessageBox.StandardButton.Yes:
+            self._reload_file()
+        else:
+            # User chose not to reload - mark as modified
+            self.document().setModified(True)
+    
+    
+    def _reload_file(self):
+        """Reload file from disk"""
+        if not self.file_path or not Path(self.file_path).exists():
+            return
+        
+        # Save cursor position
+        cursor = self.textCursor()
+        position = cursor.position()
+        
+        # Reload file
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            self.blockSignals(True)
+            self.setPlainText(content)
+            self.blockSignals(False)
+            
+            # Restore cursor position (or close to it)
+            cursor.setPosition(min(position, len(content)))
+            self.setTextCursor(cursor)
+            
+            self.document().setModified(False)
+            self.external_change_pending = False
+            
+            # Update fold regions
+            if self._is_folding_enabled():
+                self.folding_manager.update_regions()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error reloading file", str(e))
+    
+    
+    def _close_editor(self):
+        """Close this editor (notify workspace)"""
+        # Find the workspace and ask it to close this editor
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, "close_editor"):
+                parent.close_editor(self)
+                break
+            parent = parent.parent()
+    
+
+    # Add check for pending changes when user tries to save:
+    def check_external_changes_before_save(self) -> bool:
+        """
+        Check if file was modified externally before saving.
+        
+        Returns:
+            True if safe to save, False if user cancelled
+        """
+        if not self.external_change_pending:
+            return True
+        
+        if not self.file_path or not Path(self.file_path).exists():
+            return True
+        
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("External Changes")
+        msg.setText(f"The file has been modified externally:\n{Path(self.file_path).name}")
+        msg.setInformativeText("Your changes may overwrite external changes. Continue saving?")
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Save | 
+            QMessageBox.StandardButton.Cancel |
+            QMessageBox.StandardButton.Open
+        )
+        msg.button(QMessageBox.StandardButton.Open).setText("View External Changes")
+        msg.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        
+        result = msg.exec()
+        
+        if result == QMessageBox.StandardButton.Save:
+            self.external_change_pending = False
+            return True
+        elif result == QMessageBox.StandardButton.Open:
+            # Show diff or reload to view
+            self._show_external_changes()
+            return False
+        else:
+            return False
+    
+    
+    def _show_external_changes(self):
+        """Show what changed externally (simple version)"""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("External Changes")
+        msg.setText("To view external changes, you can:")
+        msg.setInformativeText(
+            "1. Save your changes to a different file\n"
+            "2. Reload the file to see external changes\n"
+            "3. Compare using an external diff tool"
+        )
+        msg.exec()
 
     # =============================================================================
     # Feature: Comment Toggle (Ctrl+/) - FIXED VERSION

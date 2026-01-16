@@ -336,3 +336,14 @@ class OutlineWidget(QWidget):
                 self.current_editor.textChanged.disconnect(self.on_text_changed)
             except:
                 pass
+
+    # def cleanup(self):
+        # """Clean up connections when widget is destroyed"""
+        # if hasattr(self, '_refresh_timer'):
+            # self._refresh_timer.stop()
+        
+        # if self.current_editor:
+            # try:
+                # self.current_editor.textChanged.disconnect(self.on_text_changed)
+            # except:
+                # pass

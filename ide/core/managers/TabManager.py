@@ -41,6 +41,10 @@ class TabManager:
             gutter_width=settings.get('gutter_width', 10)
         )
 
+        # *** NEW: Connect file monitor ***
+        if hasattr(self.parent, 'file_monitor'):
+            editor.set_file_monitor(self.parent.file_monitor)
+
         if editor.load_file(str(path)):
             tab_index = self.tabs.addTab(editor, path.name)
             self.tabs.setTabToolTip(tab_index, str(path))
@@ -76,6 +80,12 @@ class TabManager:
     def close_tab(self, index):
         """Close a tab at the given index"""
         editor = self.tabs.widget(index)
+
+        # *** NEW: Stop monitoring file ***
+        if isinstance(editor, CodeEditor) and hasattr(editor, 'file_path') and editor.file_path:
+            if hasattr(self.parent, 'file_monitor'):
+                self.parent.file_monitor.unwatch_file(editor.file_path)
+
         if isinstance(editor, CodeEditor) and editor.document().isModified():
             reply = QMessageBox.question(
                 self.parent,
