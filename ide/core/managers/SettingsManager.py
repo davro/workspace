@@ -18,7 +18,7 @@ class SettingsManager:
         
     def register_provider(self, provider_class: Type[SettingsProvider]):
         """Register a settings provider (Workspace, CodeEditor, etc.)"""
-        print (f"Provider: {provider_class}")
+        # print (f"Provider: {provider_class}")
         if provider_class not in self.providers:
             self.providers.append(provider_class)
     

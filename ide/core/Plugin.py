@@ -187,7 +187,7 @@ class PluginManager:
             plugin_class = self._find_plugin_class(module)
             
             print("################################################################################")
-            print(f"[PluginManager] Auto-loading: {plugin_file}")
+            # print(f"[PluginManager] Auto-loading: {plugin_file}")
 
             if not plugin_class:
                 raise Exception(f"No plugin class found in {plugin_file.name}")

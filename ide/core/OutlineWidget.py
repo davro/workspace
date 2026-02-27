@@ -246,7 +246,6 @@ class OutlineWidget(QWidget):
             self.symbol_clicked.emit(line)
             self.jump_to_line(line)
  
-
     def jump_to_line(self, line: int):
         """
         Jump editor to specified line
@@ -259,17 +258,55 @@ class OutlineWidget(QWidget):
         
         from PyQt6.QtGui import QTextCursor
         
-        cursor = self.current_editor.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        cursor.movePosition(
-            QTextCursor.MoveOperation.Down,
-            QTextCursor.MoveMode.MoveAnchor,
-            line - 1
-        )
-        self.current_editor.setTextCursor(cursor)
-        # self.current_editor.ensureCursorVisible()
-        self.current_editor.centerCursor()  # ← Changed from ensureCursorVisible() 
-        self.current_editor.setFocus()
+        # Use findBlockByLineNumber for accurate positioning
+        document = self.current_editor.document()
+        
+        # Qt uses 0-indexed line numbers internally
+        block = document.findBlockByLineNumber(line - 1)
+        
+        if block.isValid():
+            # Create cursor at the start of the block
+            cursor = QTextCursor(block)
+            
+            # Move to start of the line
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            
+            # Set the cursor position
+            self.current_editor.setTextCursor(cursor)
+            
+            # Center the cursor in the viewport
+            self.current_editor.centerCursor()
+            
+            # Give focus to the editor
+            self.current_editor.setFocus()
+        else:
+            print(f"[OutlineWidget] Warning: Line {line} not found in document")
+
+    # def jump_to_line(self, line: int):
+        # """
+        # Jump editor to specified line
+        
+        # Args:
+            # line: Line number (1-indexed)
+        # """
+        # if not self.current_editor:
+            # return
+        
+        # from PyQt6.QtGui import QTextCursor
+        
+        # cursor = self.current_editor.textCursor()
+        # cursor.movePosition(QTextCursor.MoveOperation.Start)
+        # cursor.movePosition(
+            # QTextCursor.MoveOperation.Down,
+            # QTextCursor.MoveMode.MoveAnchor,
+            # line - 1
+        # )
+        # self.current_editor.setTextCursor(cursor)
+        # # self.current_editor.ensureCursorVisible()
+        # self.current_editor.centerCursor()  # ← Changed from ensureCursorVisible() 
+        # self.current_editor.setFocus()
+
+
 
     def filter_symbols(self, text: str):
         """

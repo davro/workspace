@@ -14,7 +14,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtCore import Qt, QRect, QSize
 
-from ide.core.SyntaxHighlighter import PythonHighlighter, PhpHighlighter
+from ide.core.SyntaxHighlighter import PythonHighlighter, PhpHighlighter, IniHighlighter
 from ide.core.SettingDescriptor import SettingsProvider, SettingDescriptor, SettingType
 from ide.core.CodeFolding import CodeFoldingManager
 from ide.core.FileMonitor import FileMonitor
@@ -73,7 +73,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             description='Padding between line numbers and text',
             section='Editor'
         ),
-
         # Column marker
         SettingDescriptor(
             key='show_column_marker',
@@ -91,7 +90,6 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             max_value=120,
             section='Editor'
         ),
-
         # Code Folding
         SettingDescriptor(
             key='enable_code_folding',
@@ -473,6 +471,10 @@ class CodeEditor(QPlainTextEdit, SettingsProvider):
             # PHP Apply syntax highlighting
             if str(path).lower().endswith(".php"):
                 self.highlighter = PhpHighlighter(self.document())
+
+            # INI Apply syntax highlighting
+            if str(path).lower().endswith(".ini"):
+                self.highlighter = IniHighlighter(self.document())
     
             self.document().setModified(False)
     

@@ -12,6 +12,9 @@ REQUIREMENTS=(
   PyQt6
   PyQt6-WebEngine
   markdown
+  requests
+  tree-sitter 
+  tree-sitter-python
 )
 
 # ----------------------------

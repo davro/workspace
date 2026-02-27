@@ -46,6 +46,8 @@ class Symbol:
             'selector': '🎨',
             'property': '⚙️',
             'key': '🔑',
+            'section': '📂',  # NEW: Section icon for INI files 
+
         }
         return icons.get(self.type, '📄')
 
@@ -87,6 +89,7 @@ class OutlineParser:
             '.cpp': CppParser,
             '.h': CppParser,
             '.rb': RubyParser,
+            '.ini': INIParser,         # NEW: INI file support
         }
         
         parser_class = parsers.get(ext)
@@ -455,3 +458,48 @@ class RubyParser:
             symbols.append(Symbol(match.group(1), 'function', line))
         
         return sorted(symbols, key=lambda s: s.line)
+
+
+# ============================================================================
+# INI Parser
+# ============================================================================
+
+class INIParser:
+    """Parse INI/CONFIG files - extract sections and keys"""
+    
+    @staticmethod
+    def parse(content: str) -> List[Symbol]:
+        symbols = []
+        current_section = None
+        
+        lines = content.split('\n')
+        
+        for line_num, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith('#') or stripped.startswith(';'):
+                continue
+            
+            # Parse section headers [Section Name]
+            section_match = re.match(r'^\[([^\]]+)\]', stripped)
+            if section_match:
+                section_name = section_match.group(1).strip()
+                current_section = Symbol(section_name, 'section', line_num)
+                symbols.append(current_section)
+                continue
+            
+            # Parse key-value pairs
+            kv_match = re.match(r'^([^=]+?)\s*=', stripped)
+            if kv_match:
+                key_name = kv_match.group(1).strip()
+                key_symbol = Symbol(key_name, 'key', line_num)
+                
+                # If we have a current section, add as child
+                if current_section:
+                    current_section.add_child(key_symbol)
+                else:
+                    # Standalone key (no section)
+                    symbols.append(key_symbol)
+        
+        return symbols

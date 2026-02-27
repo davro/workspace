@@ -461,6 +461,10 @@ class Workspace(QMainWindow, SettingsProvider):
             # ("Ctrl+Shift+]", self.unfold_current),
             # ("Alt+0", self.fold_all),
             # ("Alt+J", self.unfold_all),
+
+            # NEW: Reveal in Explorer
+            # ("Ctrl+Shift+E", self.reveal_in_explorer),  # Common shortcut
+            ("Ctrl+E", self.reveal_in_explorer),  # Common shortcut
         ]
 
         for key, callback in shortcuts:
@@ -552,6 +556,16 @@ class Workspace(QMainWindow, SettingsProvider):
         #view_menu = self.menuBar().addMenu("View")
         #self.menu_manager._add_action(view_menu, "Toggle Explorer", "Ctrl+B", self.toggle_explorer)
         # Note: Toggle AI Panel is now handled by OllamaPlugin via Ctrl+L
+
+        # Add to View menu (or create Go menu)
+        view_menu = self.menuBar().findChildren(QMenu)[2]  # Adjust index
+        view_menu.addSeparator()
+        self.menu_manager._add_action(
+            view_menu, 
+            "Reveal in Explorer", 
+            "Ctrl+Shift+E", 
+            self.reveal_in_explorer
+        )
 
         self.menu_manager.create_go_menu()
         self.menu_manager.create_run_menu()
@@ -1567,3 +1581,62 @@ class Workspace(QMainWindow, SettingsProvider):
         if event.type() == event.Type.WindowStateChange:
             if self.isMinimized():
                 self.auto_save_session()
+
+
+    def reveal_in_explorer(self):
+        """
+        Reveal the current file in the file explorer tree.
+        Similar to VSCode/Cursor's "Reveal in Explorer" feature.
+        """
+        # Get current editor
+        current_editor = self.get_current_editor()
+        
+        if not isinstance(current_editor, CodeEditor):
+            self.show_status_message("No file open", 2000)
+            return
+        
+        if not hasattr(current_editor, 'file_path') or not current_editor.file_path:
+            self.show_status_message("Current editor has no file path", 2000)
+            return
+        
+        file_path = Path(current_editor.file_path)
+        
+        # Check if file is within workspace
+        try:
+            file_path.relative_to(self.workspace_path)
+        except ValueError:
+            self.show_status_message("File is outside workspace", 2000)
+            return
+        
+        # Get the model index for this file
+        index = self.file_model.index(str(file_path))
+        
+        if not index.isValid():
+            self.show_status_message("Could not find file in explorer", 2000)
+            return
+        
+        # Make sure explorer is visible
+        explorer_widget = self.main_splitter.widget(0)
+        if not explorer_widget.isVisible():
+            explorer_widget.setVisible(True)
+        
+        # Switch to Files tab (index 0)
+        left_tabs = explorer_widget.findChild(QTabWidget)
+        if left_tabs:
+            left_tabs.setCurrentIndex(0)
+        
+        # Expand parent folders
+        parent_index = index.parent()
+        while parent_index.isValid():
+            self.tree.expand(parent_index)
+            parent_index = parent_index.parent()
+        
+        # Select and scroll to the file
+        self.tree.setCurrentIndex(index)
+        self.tree.scrollTo(index, QTreeView.ScrollHint.PositionAtCenter)
+        
+        # Give focus to the tree (optional - remove if you want focus to stay in editor)
+        # self.tree.setFocus()
+        
+        self.show_status_message(f"Revealed: {file_path.name}", 2000)
+    

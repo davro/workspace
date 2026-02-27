@@ -241,3 +241,118 @@ class PhpHighlighter(QSyntaxHighlighter):
                     continue
 
                 self.setFormat(start, end - start, fmt)
+
+
+class IniHighlighter(QSyntaxHighlighter):
+    """
+    Syntax highlighter for INI/CONFIG files
+    
+    Highlights:
+    - [Sections] in bold orange
+    - Keys (before =) in purple
+    - Values (after =) in green
+    - Comments (# and ;) in gray italic
+    - Numbers in blue
+    """
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Section headers [Section Name] (orange-brown, bold)
+        self.section_format = QTextCharFormat()
+        self.section_format.setForeground(QColor("#CC7832"))
+        self.section_format.setFontWeight(75)  # Bold
+
+        # Keys (left side of =) (purple)
+        self.key_format = QTextCharFormat()
+        self.key_format.setForeground(QColor("#9876AA"))
+
+        # Values (right side of =) (green)
+        self.value_format = QTextCharFormat()
+        self.value_format.setForeground(QColor("#6A8759"))
+
+        # Comments (gray, italic)
+        self.comment_format = QTextCharFormat()
+        self.comment_format.setForeground(QColor("#808080"))
+        self.comment_format.setFontItalic(True)
+
+        # Numbers in values (blue)
+        self.number_format = QTextCharFormat()
+        self.number_format.setForeground(QColor("#6897BB"))
+
+        # Strings (quoted values) (brighter green)
+        self.string_format = QTextCharFormat()
+        self.string_format.setForeground(QColor("#6A8759"))
+
+        # Equals sign (light gray)
+        self.operator_format = QTextCharFormat()
+        self.operator_format.setForeground(QColor("#A9B7C6"))
+
+    def highlightBlock(self, text: str):
+        """Highlight a single line of INI file"""
+        if not text:
+            return
+
+        # Strip whitespace for checking
+        stripped = text.lstrip()
+
+        # 1. Comments (# or ;) - highest priority
+        comment_match = re.search(r'[#;]', text)
+        if comment_match:
+            comment_start = comment_match.start()
+            self.setFormat(comment_start, len(text) - comment_start, self.comment_format)
+            # Only process text before comment
+            text = text[:comment_start]
+            if not text.strip():
+                return
+
+        # 2. Section headers [Section Name]
+        section_match = re.match(r'^\s*\[([^\]]+)\]', text)
+        if section_match:
+            start = section_match.start()
+            length = section_match.end() - start
+            self.setFormat(start, length, self.section_format)
+            return
+
+        # 3. Key = Value pairs
+        kv_match = re.match(r'^\s*([^=]+?)\s*(=)\s*(.*)$', text)
+        if kv_match:
+            key_text = kv_match.group(1)
+            equals_sign = kv_match.group(2)
+            value_text = kv_match.group(3)
+
+            # Highlight key
+            key_start = kv_match.start(1)
+            key_length = len(key_text)
+            self.setFormat(key_start, key_length, self.key_format)
+
+            # Highlight equals sign
+            equals_start = kv_match.start(2)
+            self.setFormat(equals_start, 1, self.operator_format)
+
+            # Highlight value
+            value_start = kv_match.start(3)
+            value_length = len(value_text)
+            
+            # Check if value is quoted string
+            quoted_match = re.match(r'^\s*"([^"]*)"', value_text)
+            if quoted_match:
+                # Quoted string - use string format
+                quote_start = value_start + quoted_match.start()
+                quote_length = quoted_match.end() - quoted_match.start()
+                self.setFormat(quote_start, quote_length, self.string_format)
+            else:
+                # Check if value contains numbers
+                number_match = re.search(r'\b\d+\.?\d*\b', value_text)
+                if number_match and value_text.strip().replace('.', '').isdigit():
+                    # Pure number value
+                    self.setFormat(value_start, value_length, self.number_format)
+                else:
+                    # Regular value (could be true/false, paths, etc.)
+                    self.setFormat(value_start, value_length, self.value_format)
+                    
+                    # Highlight numbers within the value
+                    for num_match in re.finditer(r'\b\d+\.?\d*\b', value_text):
+                        num_start = value_start + num_match.start()
+                        num_length = num_match.end() - num_match.start()
+                        self.setFormat(num_start, num_length, self.number_format)

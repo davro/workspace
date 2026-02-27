@@ -249,7 +249,8 @@ class MenuManager:
         menu = self.menubar.addMenu("Go")
         self.menus['go'] = menu
 
-        self._add_action(menu, "Go to File...", None, self.parent.show_quick_open)
+        # self._add_action(menu, "Go to File...", None, self.parent.show_quick_open)
+        self._add_action(menu, "Go to File...", "Ctrl+O", self.parent.show_quick_open)
         self._add_action(menu, "Go to Line...", "Ctrl+G", self.parent.go_to_line)
 
         return menu
