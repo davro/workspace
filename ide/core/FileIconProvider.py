@@ -37,7 +37,7 @@ class FileIconProvider:
         '.php': '🐘',
         '.swift': '🦅',
         '.kt': '🎯',
-		'.tl': '🔷',
+        '.tl': '🔷',
         
         # Web
         '.html': '🌐',

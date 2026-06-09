@@ -66,7 +66,15 @@ class PluginManager:
         # Create plugins directory if it doesn't exist
         if not self.plugins_dir.exists():
             self.plugins_dir.mkdir(parents=True)
-    
+
+        # Ensure the plugins directory is on sys.path so that any plugin
+        # sub-packages (e.g. WalletPlugin/, OllamaPlugin/) are importable
+        # when exec_module runs — regardless of the process working directory.
+        import sys
+        plugins_dir_str = str(self.plugins_dir)
+        if plugins_dir_str not in sys.path:
+            sys.path.insert(0, plugins_dir_str)
+
     def set_plugin_api(self, plugin_api):
         """Set the plugin API after initialization"""
         self.plugin_api = plugin_api

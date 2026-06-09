@@ -8,6 +8,7 @@ All heavy lifting is delegated to manager classes
 """
 
 # Import Python classes
+import os
 import sys
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from PyQt6.QtGui import QFileSystemModel, QShortcut, QKeySequence, QTextCursor
 from PyQt6.QtCore import Qt, QTimer
 
 # Import IDE Core classes
-from ide import VERSION, WORKSPACE_PATH
+from ide import VERSION
 from ide.core.Plugin import PluginManager
 from ide.core.PluginAPI import PluginAPI
 from ide.core.FindReplace import FindReplaceWidget
@@ -50,6 +51,46 @@ from ide.core.managers.MenuManager import MenuManager
 from ide.core.managers.RecentFilesManager import RecentFilesManager
 from ide.core.managers.SplitEditorManager import SplitEditorManager
 from ide.core.managers.TabOrderManager import TabOrderManager
+
+
+# ============================================================================
+# AppDirs — cross-platform config directory resolver
+#
+# Linux   : ~/.config/workspace-ide/
+# macOS   : ~/Library/Application Support/workspace-ide/
+# Windows : %APPDATA%\workspace-ide\
+#
+# Usage (from anywhere that has access to the path):
+#   AppDirs.base()                     → Path to root config dir
+#   AppDirs.plugin_dir("wallet")       → Path to plugin-specific subdir
+# ============================================================================
+
+class AppDirs:
+
+    APP_NAME = "workspace-ide"
+
+    @classmethod
+    def base(cls) -> Path:
+        """Return (and create) the root config directory for this platform."""
+        import sys as _sys
+        if _sys.platform == "win32":
+            base = Path(os.environ.get("APPDATA", Path.home())) / cls.APP_NAME
+        elif _sys.platform == "darwin":
+            base = Path.home() / "Library" / "Application Support" / cls.APP_NAME
+        else:
+            # XDG_CONFIG_HOME or ~/.config
+            xdg = os.environ.get("XDG_CONFIG_HOME", "")
+            base = (Path(xdg) if xdg else Path.home() / ".config") / cls.APP_NAME
+
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+
+    @classmethod
+    def plugin_dir(cls, plugin_name: str) -> Path:
+        """Return (and create) a sandboxed config dir for a named plugin."""
+        d = cls.base() / "plugins" / plugin_name
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
 
 class Workspace(QMainWindow, SettingsProvider):
@@ -112,16 +153,24 @@ class Workspace(QMainWindow, SettingsProvider):
         # Auto-detect from current working directory
         cwd = Path.cwd()
 
-        # Check if CWD looks like a workspace directory
-        self.workspace_path = Path.home() / WORKSPACE_PATH
-        self.workspace_plugin_path = cwd  / "ide/plugins"
-        print(f"ℹ️  Using IDE from: {cwd}")
-        print(f"ℹ️  Using IDE plugins from: {self.workspace_plugin_path}")
-        print(f"ℹ️  Using workspace data from: {self.workspace_path}")
+        # Workspace source tree paths (unchanged)
+        self.workspace_path        = cwd / ".."
+        self.workspace_plugin_path = cwd / "ide" / "plugins"
 
-        # Initialize paths
-        self.config_file  = self.workspace_path / ".workspace_ide_config.json"
-        self.session_file = self.workspace_path / ".workspace_ide_session.json"
+        # ── Centralised config directory (cross-platform) ──────────────────
+        # Linux   : ~/.config/workspace-ide/
+        # macOS   : ~/Library/Application Support/workspace-ide/
+        # Windows : %APPDATA%\workspace-ide\
+        self.app_config_dir = AppDirs.base()
+        self.config_file    = self.app_config_dir / "config.json"
+        self.session_file   = self.app_config_dir / "session.json"
+
+        print(f"ℹ️  Using IDE from cwd: {cwd}")
+        print(f"ℹ️  Using IDE plugin_path: {self.workspace_plugin_path}")
+        print(f"ℹ️  workspace_path: {self.workspace_path}")
+        print(f"ℹ️  config dir: {self.app_config_dir}")
+        print(f"ℹ️  config_file: {self.config_file}")
+        print(f"ℹ️  session_file: {self.session_file}")
 
         # Quick open cache
         self.quick_open_cache = []
@@ -136,6 +185,11 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Initialize Plugin API/Manager System
         self.plugin_api = PluginAPI(self)
+
+        # Expose AppDirs on the API so plugins can resolve their config paths
+        # without coupling to Workspace internals:
+        #   api.app_dirs.plugin_dir("wallet")  → ~/.config/workspace-ide/plugins/wallet/
+        self.plugin_api.app_dirs = AppDirs
 
         # Create Plugin Manager (manages plugin files on disk)
         self.plugin_manager = PluginManager(self.workspace_plugin_path, self.plugin_api)
@@ -1639,4 +1693,3 @@ class Workspace(QMainWindow, SettingsProvider):
         # self.tree.setFocus()
         
         self.show_status_message(f"Revealed: {file_path.name}", 2000)
-    

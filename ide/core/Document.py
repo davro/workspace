@@ -4,7 +4,6 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QTextBrowser,
@@ -54,8 +53,6 @@ class DocumentDialog(QDialog):
         layout.addWidget(header)
 
         # Text browser to display markdown (with HTML rendering)
-        #self.text_browser = QTextEdit()
-        #self.text_browser.setReadOnly(True)
         self.text_browser = QTextBrowser()
         self.text_browser.setOpenExternalLinks(True)  # Optional: allows clicking links
 
@@ -222,8 +219,6 @@ class DocumentDialog(QDialog):
     def markdown_to_html(self, markdown_text):
         """Convert markdown to HTML using markdown library with better list handling"""
         try:
-            import markdown
-
             html = markdown.markdown(
                 markdown_text,
                 extensions=[

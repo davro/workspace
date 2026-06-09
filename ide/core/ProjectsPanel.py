@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from ide import WORKSPACE_PATH
 from ide.core.SettingDescriptor import SettingsProvider, SettingDescriptor, SettingType
 
 class ProjectsPanel(QWidget, SettingsProvider):
@@ -96,21 +95,25 @@ class ProjectsPanel(QWidget, SettingsProvider):
         projects.sort(key=lambda p: p.name.lower())
 
         for project_path in projects:
+            # Resolve to canonical absolute path so stored paths containing
+            # ".." segments (e.g. from config.json) match correctly.
+            resolved = str(project_path.resolve())
+
             item = QListWidgetItem(project_path.name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
 
-            if str(project_path) in self.active_projects:
+            if resolved in self.active_projects:
                 item.setCheckState(Qt.CheckState.Checked)
             else:
                 item.setCheckState(Qt.CheckState.Unchecked)
 
-            item.setData(Qt.ItemDataRole.UserRole, str(project_path))
+            item.setData(Qt.ItemDataRole.UserRole, resolved)
 
             try:
                 file_count = sum(1 for _ in project_path.rglob('*') if _.is_file())
-                item.setToolTip(f"{project_path}\n~{file_count} files")
+                item.setToolTip(f"{resolved}\n~{file_count} files")
             except:
-                item.setToolTip(str(project_path))
+                item.setToolTip(resolved)
 
             self.projects_list.addItem(item)
 
@@ -140,8 +143,13 @@ class ProjectsPanel(QWidget, SettingsProvider):
         return list(self.active_projects)
 
     def set_active_projects(self, projects):
-        """Set which projects are active"""
-        self.active_projects = set(projects)
+        """Set which projects are active.
+
+        Incoming paths are resolved to canonical absolute form so they match
+        the resolved paths stored in each list item's UserRole data, even when
+        the config contains ".." segments.
+        """
+        self.active_projects = {str(Path(p).resolve()) for p in projects}
         for i in range(self.projects_list.count()):
             item = self.projects_list.item(i)
             project_path = item.data(Qt.ItemDataRole.UserRole)

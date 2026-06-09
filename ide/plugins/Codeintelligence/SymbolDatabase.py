@@ -5,6 +5,7 @@ SymbolDatabase - Storage and indexing for symbols
 """
 
 import json
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
@@ -22,7 +23,12 @@ class SymbolDatabase:
     def __init__(self, cache_dir: Path):
         self.cache_dir = cache_dir
         self.cache_file = cache_dir / "symbol_index.json"
-        
+
+        # Lock protecting all in-memory indexes.
+        # IndexingThread mutates them from a background thread while the
+        # main thread reads them via get_statistics / fuzzy_search.
+        self._lock = threading.Lock()
+
         # In-memory indexes
         self.symbols_by_name: Dict[str, List[SymbolInfo]] = {}
         self.symbols_by_file: Dict[str, List[SymbolInfo]] = {}
@@ -41,22 +47,23 @@ class SymbolDatabase:
         Args:
             symbols: List of SymbolInfo objects to add
         """
-        for symbol in symbols:
-            # Index by name
-            if symbol.name not in self.symbols_by_name:
-                self.symbols_by_name[symbol.name] = []
-            self.symbols_by_name[symbol.name].append(symbol)
-            
-            # Index by file
-            if symbol.file_path not in self.symbols_by_file:
-                self.symbols_by_file[symbol.file_path] = []
-            self.symbols_by_file[symbol.file_path].append(symbol)
-            
-            # Index by qualified name (unique)
-            self.symbols_by_qualified_name[symbol.qualified_name] = symbol
-            
-            # Add to fuzzy index
-            self.fuzzy_index.append((symbol.name.lower(), symbol))
+        with self._lock:
+            for symbol in symbols:
+                # Index by name
+                if symbol.name not in self.symbols_by_name:
+                    self.symbols_by_name[symbol.name] = []
+                self.symbols_by_name[symbol.name].append(symbol)
+                
+                # Index by file
+                if symbol.file_path not in self.symbols_by_file:
+                    self.symbols_by_file[symbol.file_path] = []
+                self.symbols_by_file[symbol.file_path].append(symbol)
+                
+                # Index by qualified name (unique)
+                self.symbols_by_qualified_name[symbol.qualified_name] = symbol
+                
+                # Add to fuzzy index
+                self.fuzzy_index.append((symbol.name.lower(), symbol))
     
     def remove_file(self, file_path: str):
         """
@@ -65,28 +72,33 @@ class SymbolDatabase:
         Args:
             file_path: Path to file to remove symbols from
         """
-        if file_path not in self.symbols_by_file:
-            return
-        
-        for symbol in self.symbols_by_file[file_path]:
-            # Remove from name index
-            if symbol.name in self.symbols_by_name:
-                self.symbols_by_name[symbol.name] = [
-                    s for s in self.symbols_by_name[symbol.name] if s != symbol
-                ]
-                # Remove empty lists
-                if not self.symbols_by_name[symbol.name]:
-                    del self.symbols_by_name[symbol.name]
+        with self._lock:
+            if file_path not in self.symbols_by_file:
+                return
             
-            # Remove from qualified name index
-            if symbol.qualified_name in self.symbols_by_qualified_name:
-                del self.symbols_by_qualified_name[symbol.qualified_name]
-        
-        # Remove from file index
-        del self.symbols_by_file[file_path]
-        
-        # Rebuild fuzzy index
-        self.rebuild_fuzzy_index()
+            for symbol in self.symbols_by_file[file_path]:
+                # Remove from name index
+                if symbol.name in self.symbols_by_name:
+                    self.symbols_by_name[symbol.name] = [
+                        s for s in self.symbols_by_name[symbol.name] if s != symbol
+                    ]
+                    # Remove empty lists
+                    if not self.symbols_by_name[symbol.name]:
+                        del self.symbols_by_name[symbol.name]
+                
+                # Remove from qualified name index
+                if symbol.qualified_name in self.symbols_by_qualified_name:
+                    del self.symbols_by_qualified_name[symbol.qualified_name]
+            
+            # Remove from file index
+            del self.symbols_by_file[file_path]
+            
+            # Rebuild fuzzy index (still inside lock)
+            self.fuzzy_index = [
+                (s.name.lower(), s)
+                for symbols in self.symbols_by_name.values()
+                for s in symbols
+            ]
     
     def find_symbol(self, name: str) -> List[SymbolInfo]:
         """
@@ -142,7 +154,8 @@ class SymbolDatabase:
         pattern_lower = pattern.lower()
         scored_matches = []
         
-        for name_lower, symbol in self.fuzzy_index:
+        snapshot = list(self.fuzzy_index)  # snapshot avoids holding lock during scoring
+        for name_lower, symbol in snapshot:
             score = self._fuzzy_score(pattern_lower, name_lower)
             if score > 0:
                 scored_matches.append((score, symbol))
@@ -205,16 +218,18 @@ class SymbolDatabase:
     
     def clear(self):
         """Clear all indexes"""
-        self.symbols_by_name.clear()
-        self.symbols_by_file.clear()
-        self.symbols_by_qualified_name.clear()
-        self.fuzzy_index.clear()
+        with self._lock:
+            self.symbols_by_name.clear()
+            self.symbols_by_file.clear()
+            self.symbols_by_qualified_name.clear()
+            self.fuzzy_index.clear()
     
     def save_to_cache(self):
         """Persist index to disk"""
         try:
+            snapshot = self._all_symbols()  # thread-safe snapshot
             data = {
-                'symbols': [s.to_dict() for s in self._all_symbols()],
+                'symbols': [s.to_dict() for s in snapshot],
                 'version': '1.0',
                 'timestamp': datetime.now().isoformat()
             }
@@ -245,13 +260,15 @@ class SymbolDatabase:
             print(f"[SymbolDatabase] Error loading cache: {e}")
     
     def rebuild_fuzzy_index(self):
-        """Rebuild fuzzy search index"""
-        self.fuzzy_index = [
-            (symbol.name.lower(), symbol)
-            for symbols in self.symbols_by_name.values()
-            for symbol in symbols
-        ]
+        """Rebuild fuzzy search index (acquires lock)."""
+        with self._lock:
+            self.fuzzy_index = [
+                (symbol.name.lower(), symbol)
+                for symbols in self.symbols_by_name.values()
+                for symbol in symbols
+            ]
     
     def _all_symbols(self) -> List[SymbolInfo]:
-        """Get all symbols (flat list)"""
-        return [s for symbols in self.symbols_by_name.values() for s in symbols]
+        """Get all symbols (flat list) — takes a snapshot under the lock."""
+        with self._lock:
+            return [s for symbols in self.symbols_by_name.values() for s in symbols]

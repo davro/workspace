@@ -551,15 +551,59 @@ class PluginAPI:
         """
         return "2.0.0"
 
-    # def register_keyboard_shortcut(self, shortcut: str, callback: Callable, description: str = ""):
 
-        # from PyQt6.QtGui import QShortcut, QKeySequence
-
-        # qs = QShortcut(QKeySequence(shortcut), self.ide)
-        # qs.activated.connect(callback)
-
-        # print(f"[PluginAPI] Registered keyboard shortcut: {shortcut} - {description}")
-        # return qs
+    # ============================================================================
+    # BONUS: Useful helper methods for plugins
+    # ============================================================================
+    
+    def get_main_window(self):
+        """
+        Get reference to main IDE window
+        
+        Returns:
+            Workspace: Main IDE window instance
+        """
+        return self.ide
+    
+    
+    def get_current_editor(self):
+        """
+        Get the currently active editor
+        
+        Returns:
+            CodeEditor or None: Current editor widget
+        """
+        if hasattr(self.ide, 'get_current_editor'):
+            return self.ide.get_current_editor()
+        return None
+    
+    def get_workspace_path(self):
+        """
+        Get workspace root path
+        
+        Returns:
+            Path: Workspace directory path
+        """
+        if hasattr(self.ide, 'workspace_path'):
+            return self.ide.workspace_path
+        return None
+    
+    
+    def show_status_message(self, message: str, timeout: int = 2000):
+        """
+        Show message in status bar
+        
+        Args:
+            message: Message to display
+            timeout: How long to show (milliseconds)
+        """
+        if hasattr(self.ide, 'status_message'):
+            self.ide.status_message.setText(message)
+            
+            if timeout > 0:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(timeout, lambda: self.ide.status_message.setText(""))
+    
 
 
     def register_keyboard_shortcut(
@@ -615,58 +659,6 @@ class PluginAPI:
 
 
 
-    # ============================================================================
-    # BONUS: Useful helper methods for plugins
-    # ============================================================================
-    
-    def get_main_window(self):
-        """
-        Get reference to main IDE window
-        
-        Returns:
-            Workspace: Main IDE window instance
-        """
-        return self.ide
-    
-    
-    def get_current_editor(self):
-        """
-        Get the currently active editor
-        
-        Returns:
-            CodeEditor or None: Current editor widget
-        """
-        if hasattr(self.ide, 'get_current_editor'):
-            return self.ide.get_current_editor()
-        return None
-    
-    def get_workspace_path(self):
-        """
-        Get workspace root path
-        
-        Returns:
-            Path: Workspace directory path
-        """
-        if hasattr(self.ide, 'workspace_path'):
-            return self.ide.workspace_path
-        return None
-    
-    
-    def show_status_message(self, message: str, timeout: int = 2000):
-        """
-        Show message in status bar
-        
-        Args:
-            message: Message to display
-            timeout: How long to show (milliseconds)
-        """
-        if hasattr(self.ide, 'status_message'):
-            self.ide.status_message.setText(message)
-            
-            if timeout > 0:
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(timeout, lambda: self.ide.status_message.setText(""))
-    
     
     def register_keyboard_shortcut(self, key_sequence: str, callback, description: str = ""):
         """

@@ -74,14 +74,16 @@ class CodeIntelligencePlugin:
             return
         
         # Initialize components
-        cache_dir = self.api.get_workspace_path() / ".code_intelligence"
+        #cache_dir = self.api.get_workspace_path() / ".code_intelligence"
+        cache_dir = self.api.app_dirs.plugin_dir("code-intelligence")
         cache_dir.mkdir(exist_ok=True)
         
         self.database = SymbolDatabase(cache_dir)
         self.indexer = SymbolIndexer()
         self.nav_manager = NavigationManager(self.database, self.api)
         self.ref_tracker = ReferenceTracker(self.database)
-        
+
+        print(f"{cache_dir} Plugin initialized")        
         print(f"[{self.PLUGIN_NAME}] Plugin initialized")
         
         # Register hooks

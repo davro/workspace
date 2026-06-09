@@ -13,8 +13,15 @@ REQUIREMENTS=(
   PyQt6-WebEngine
   markdown
   requests
-  tree-sitter 
+  tree-sitter
   tree-sitter-python
+  web3
+  bip_utils
+  cryptography
+  argon2
+  argon2-cffi
+  argon2-cffi-bindings
+  psycopg
 )
 
 # ----------------------------
