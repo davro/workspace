@@ -193,7 +193,7 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Create Plugin Manager (manages plugin files on disk)
         self.plugin_manager = PluginManager(self.workspace_plugin_path, self.plugin_api)
-        # self.plugin_manager.scan_plugins()
+        self.plugin_manager.scan_plugins()
 
         # Initialize split manager
         self.split_manager = SplitEditorManager(self)
@@ -472,8 +472,7 @@ class Workspace(QMainWindow, SettingsProvider):
         self.tabs.setTabsClosable(True)
         self.tabs.setMovable(True)
 
-        # BUG CLOSES MUTIPLE TABS AFTER TAB CLOSE
-        #self.tabs.tabCloseRequested.connect(lambda idx: self.tab_manager.close_tab(idx))
+        self.tabs.tabCloseRequested.connect(lambda idx: self.split_manager.close_tab_in_group(0, idx))
 
         self.tabs.currentChanged.connect(self.on_editor_tab_changed)
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

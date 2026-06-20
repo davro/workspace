@@ -659,55 +659,7 @@ class PluginAPI:
 
 
 
-    
-    def register_keyboard_shortcut(self, key_sequence: str, callback, description: str = ""):
-        """
-        Register a keyboard shortcut
-        
-        Args:
-            key_sequence: Key combination (e.g., "Ctrl+Shift+X")
-            callback: Function to call when triggered
-            description: Description for documentation
-        
-        Returns:
-            bool: True if registered successfully
-        
-        Example:
-            >>> api.register_keyboard_shortcut(
-            ...     "Ctrl+Shift+X",
-            ...     self.my_action,
-            ...     "My Plugin Action"
-            ... )
-        """
-        from PyQt6.QtGui import QShortcut, QKeySequence
-        
-        try:
-            # Create a safe wrapper that catches exceptions
-            def safe_callback():
-                try:
-                    callback()
-                except Exception as e:
-                    print(f"[Shortcut Error] {key_sequence}: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            # Create and store shortcut
-            shortcut = QShortcut(QKeySequence(key_sequence), self.ide)
-            shortcut.activated.connect(safe_callback)
-            
-            # Store reference to prevent garbage collection
-            self._shortcuts[key_sequence] = shortcut
-            
-            print(f"[PluginAPI] Registered shortcut: {key_sequence} - {description}")
-            return True
-            
-        except Exception as e:
-            print(f"[PluginAPI] Failed to register shortcut {key_sequence}: {e}")
-            return False
 
-
-
-        
     # ============================================================================
     # ADD THESE METHODS TO PluginAPI CLASS
     # ============================================================================
@@ -887,10 +839,10 @@ class PluginAPI:
         Example:
             >>> api.add_menu_action("View", "Toggle AI Panel", self.toggle_panel, "Ctrl+L")
         """
-        if not hasattr(self.workspace, 'menuBar'):
+        if not hasattr(self.ide, 'menuBar'):
             return False
         
-        menubar = self.workspace.menuBar()
+        menubar = self.ide.menuBar()
         
         # Split path (e.g., "Edit/Advanced" -> ["Edit", "Advanced"])
         parts = menu_path.split('/')
@@ -923,7 +875,7 @@ class PluginAPI:
         
         # Add the action
         from PyQt6.QtGui import QAction
-        action = QAction(action_name, self.workspace)
+        action = QAction(action_name, self.ide)
         action.triggered.connect(callback)
         
         if shortcut:

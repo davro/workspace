@@ -4,10 +4,11 @@ set -e
 # ----------------------------
 # Configuration
 # ----------------------------
-FILENAME="${1:-ide.py}"
-ACTION="$2"
+FILENAME="ide.py"
+ACTION="$1"
 WORKSPACE_ENV="workspace-env"
 
+# PyQt6-Multimedia
 REQUIREMENTS=(
   PyQt6
   PyQt6-WebEngine
@@ -22,6 +23,7 @@ REQUIREMENTS=(
   argon2-cffi
   argon2-cffi-bindings
   psycopg
+  yt-dlp
 )
 
 # ----------------------------
@@ -37,6 +39,11 @@ activate_venv() {
 }
 
 install_packages() {
+
+  echo "[+] Installing system packages"
+  sudo apt install yt-dlp
+  sudo apt install ffmpeg
+
   echo "[+] Installing packages"
   pip install --upgrade pip
   pip install "${REQUIREMENTS[@]}"
@@ -74,6 +81,7 @@ else
 fi
 
 # Manual actions
+echo "[+] Action $ACTION"
 case "$ACTION" in
   install)
     install_packages
