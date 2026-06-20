@@ -1,0 +1,422 @@
+"""
+FFmpegWorker — All FFmpeg operations run in background QThreads.
+
+Never call FFmpeg on the main thread. Use these workers and connect
+to their signals.
+"""
+
+import subprocess
+import json
+import os
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+from PyQt6.QtCore import QThread, pyqtSignal, QObject
+
+from .ClipModel import Clip, Project, MediaInfo, ClipType, seconds_to_tc
+
+
+# ---------------------------------------------------------------------------
+# Helpers — ffprobe / ffmpeg discovery
+# ---------------------------------------------------------------------------
+
+def _find_ffmpeg() -> str:
+    for candidate in ["ffmpeg", "/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
+        try:
+            subprocess.run([candidate, "-version"], capture_output=True, timeout=3)
+            return candidate
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    return "ffmpeg"
+
+
+def _find_ffprobe() -> str:
+    for candidate in ["ffprobe", "/usr/bin/ffprobe", "/usr/local/bin/ffprobe"]:
+        try:
+            subprocess.run([candidate, "-version"], capture_output=True, timeout=3)
+            return candidate
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    return "ffprobe"
+
+
+FFMPEG  = _find_ffmpeg()
+FFPROBE = _find_ffprobe()
+
+
+# ---------------------------------------------------------------------------
+# ProbeWorker
+# ---------------------------------------------------------------------------
+
+class ProbeWorker(QThread):
+    finished = pyqtSignal(object)
+    error    = pyqtSignal(str)
+
+    def __init__(self, path: str, parent=None):
+        super().__init__(parent)
+        self.path = path
+
+    def run(self):
+        try:
+            info = probe_file(self.path)
+            self.finished.emit(info)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+def probe_file(path: str) -> MediaInfo:
+    cmd = [
+        FFPROBE, "-v", "quiet",
+        "-print_format", "json",
+        "-show_format", "-show_streams",
+        path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {result.stderr.strip()}")
+
+    data    = json.loads(result.stdout)
+    fmt     = data.get("format", {})
+    streams = data.get("streams", [])
+
+    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+
+    duration = float(fmt.get("duration") or 0)
+    if not duration and video_stream:
+        duration = float(video_stream.get("duration") or 0)
+
+    fps = 0.0
+    if video_stream:
+        r_frame_rate = video_stream.get("r_frame_rate", "0/1")
+        try:
+            num, den = r_frame_rate.split("/")
+            fps = float(num) / float(den) if float(den) else 0.0
+        except (ValueError, ZeroDivisionError):
+            fps = 0.0
+
+    ext = Path(path).suffix.lower()
+    if ext in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"}:
+        clip_type = ClipType.IMAGE
+        duration  = duration or 5.0
+    elif video_stream:
+        clip_type = ClipType.VIDEO
+    else:
+        clip_type = ClipType.AUDIO
+
+    has_audio = audio_stream is not None
+
+    return MediaInfo(
+        path         = path,
+        clip_type    = clip_type,
+        duration     = duration,
+        width        = int(video_stream.get("width",  0)) if video_stream else 0,
+        height       = int(video_stream.get("height", 0)) if video_stream else 0,
+        fps          = fps,
+        codec        = video_stream.get("codec_name", "") if video_stream else "",
+        audio_codec  = audio_stream.get("codec_name", "") if audio_stream else "",
+        file_size    = int(fmt.get("size", 0)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# ThumbnailWorker
+# ---------------------------------------------------------------------------
+
+class ThumbnailWorker(QThread):
+    finished = pyqtSignal(str, str)
+    error    = pyqtSignal(str, str)
+
+    def __init__(self, path: str, out_path: str, seek: float = 0.5, parent=None):
+        super().__init__(parent)
+        self.path     = path
+        self.out_path = out_path
+        self.seek     = seek
+
+    def run(self):
+        try:
+            cmd = [
+                FFMPEG, "-y",
+                "-ss", str(self.seek),
+                "-i", self.path,
+                "-vframes", "1",
+                "-vf", "scale=160:-1",
+                "-q:v", "3",
+                self.out_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=15)
+            if result.returncode == 0 and Path(self.out_path).exists():
+                self.finished.emit(self.path, self.out_path)
+            else:
+                self.error.emit(self.path, "Thumbnail extraction failed")
+        except Exception as e:
+            self.error.emit(self.path, str(e))
+
+
+# ---------------------------------------------------------------------------
+# ExportWorker
+# ---------------------------------------------------------------------------
+
+class ExportWorker(QThread):
+    """
+    Export a Project to a video file using FFmpeg filter_complex.
+
+    Respects timeline_position of each clip — gaps become black frames.
+
+    Signals
+    -------
+    progress(float)   0.0 – 1.0
+    finished(str)     output path on success
+    error(str)        human-readable error message
+    log(str)          ffmpeg output line
+    """
+
+    progress = pyqtSignal(float)
+    finished = pyqtSignal(str)
+    error    = pyqtSignal(str)
+    log      = pyqtSignal(str)
+
+    def __init__(self, project: Project, output_path: str,
+                 preset: str = "medium", crf: int = 23, parent=None):
+        super().__init__(parent)
+        self.project     = project
+        self.output_path = output_path
+        self.preset      = preset
+        self.crf         = crf
+        self._cancelled  = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            self._export()
+        except Exception as e:
+            self.error.emit(str(e))
+
+    def _export(self):
+        project = self.project
+        clips   = sorted(
+            [c for c in project.clips if c.track_type == "video"],
+            key=lambda c: c.timeline_position
+        )
+
+        if not clips:
+            self.error.emit("No video clips on the timeline.")
+            return
+
+        total_duration = project.duration
+        if total_duration <= 0:
+            self.error.emit("Timeline duration is zero.")
+            return
+
+        W   = project.width
+        H   = project.height
+        fps = project.fps
+
+        # ------------------------------------------------------------------
+        # Build a segment list: real clips + black gap clips between them.
+        # Each segment = (duration_seconds, clip_or_None)
+        # ------------------------------------------------------------------
+        segments = []   # (duration, Clip or None)
+        prev_end = 0.0
+
+        for clip in clips:
+            t_start = clip.timeline_position
+            t_end   = clip.timeline_end
+            gap     = t_start - prev_end
+
+            if gap > 0.02:                      # >20ms gap → insert black
+                segments.append((gap, None))
+
+            if clip.source_duration > 0:
+                segments.append((clip.source_duration, clip))
+
+            prev_end = t_end
+
+        if not segments:
+            self.error.emit("No valid segments found.")
+            return
+
+        # ------------------------------------------------------------------
+        # Build FFmpeg command
+        #
+        # For each segment we add an -i input (or lavfi source for gaps).
+        # filter_complex scales/pads each segment then concat joins them.
+        # ------------------------------------------------------------------
+        scale_pad = (
+            f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"setsar=1:1,fps={fps},format=yuv420p"
+        )
+
+        cmd_inputs   = []
+        filter_parts = []
+        v_labels     = []
+        a_labels     = []
+        input_idx    = 0
+
+        for seg_idx, (seg_dur, clip) in enumerate(segments):
+            vl = f"[sv{seg_idx}]"
+            al = f"[sa{seg_idx}]"
+
+            if clip is None:
+                # Black gap: single lavfi input combining colour + silent audio.
+                # We use a single -i with both video and audio via the concat
+                # demuxer trick — simpler: just use color+anullsrc as two inputs.
+                # anullsrc is the correct way to generate silent audio; aevalsrc
+                # r= is not a valid option in modern FFmpeg.
+                cmd_inputs += [
+                    "-f", "lavfi",
+                    "-i", f"color=c=black:s={W}x{H}:r={fps}:d={seg_dur:.6f}"
+                ]
+                filter_parts.append(
+                    f"[{input_idx}:v]fps={fps},setsar=1:1,format=yuv420p,setpts=PTS-STARTPTS{vl};"
+                )
+                # anullsrc generates silent audio; trim to exact gap duration via atrim
+                cmd_inputs += [
+                    "-f", "lavfi",
+                    "-i", f"anullsrc=channel_layout=stereo:sample_rate=44100",
+                    "-t", f"{seg_dur:.6f}",
+                ]
+                filter_parts.append(
+                    f"[{input_idx+1}:a]atrim=duration={seg_dur:.6f},asetpts=PTS-STARTPTS{al};"
+                )
+                input_idx += 2
+
+            else:
+                # Real clip — trim at input level for efficiency
+                cmd_inputs += [
+                    "-ss", f"{clip.in_point:.6f}",
+                    "-t",  f"{seg_dur:.6f}",
+                    "-i",  clip.source_path,
+                ]
+                filter_parts.append(
+                    f"[{input_idx}:v]{scale_pad},setpts=PTS-STARTPTS{vl};"
+                )
+                # Audio: use the clip's audio stream
+                filter_parts.append(
+                    f"[{input_idx}:a]asetpts=PTS-STARTPTS,apad=whole_dur={seg_dur:.6f}{al};"
+                )
+                input_idx += 1
+
+            v_labels.append(vl)
+            a_labels.append(al)
+
+        # Concat all segments
+        # FFmpeg concat requires interleaved v/a pairs: [v0][a0][v1][a1]...
+        # NOT grouped [v0][v1][a0][a1] — that causes a media type mismatch error
+        n      = len(v_labels)
+        all_in = "".join(vl + al for vl, al in zip(v_labels, a_labels))
+        filter_parts.append(f"{all_in}concat=n={n}:v=1:a=1[vout][aout]")
+        filter_complex = "".join(filter_parts)
+
+        cmd = (
+            [FFMPEG, "-y"]
+            + cmd_inputs
+            + [
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
+                "-map", "[aout]",
+                "-c:v", "libx264",
+                "-preset", self.preset,
+                "-crf", str(self.crf),
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-progress", "pipe:1",
+                self.output_path,
+            ]
+        )
+
+        self.log.emit(f"FFmpeg command:\n{' '.join(cmd)}\n")
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        for line in process.stdout:
+            if self._cancelled:
+                process.terminate()
+                self.error.emit("Export cancelled.")
+                return
+            line = line.strip()
+            self.log.emit(line)
+            if line.startswith("out_time_ms="):
+                try:
+                    out_time = int(line.split("=")[1]) / 1_000_000
+                    pct = min(out_time / total_duration, 1.0)
+                    self.progress.emit(pct)
+                except ValueError:
+                    pass
+
+        process.wait()
+
+        if process.returncode == 0:
+            self.progress.emit(1.0)
+            self.finished.emit(self.output_path)
+        else:
+            stderr = process.stderr.read() if process.stderr else ""
+            self.error.emit(
+                f"FFmpeg export failed (code {process.returncode}).\n{stderr[-1200:]}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# TrimWorker
+# ---------------------------------------------------------------------------
+
+class TrimWorker(QThread):
+    finished = pyqtSignal(str)
+    error    = pyqtSignal(str)
+
+    def __init__(self, source: str, in_point: float, out_point: float,
+                 output_path: str, parent=None):
+        super().__init__(parent)
+        self.source      = source
+        self.in_point    = in_point
+        self.out_point   = out_point
+        self.output_path = output_path
+
+    def run(self):
+        try:
+            duration = self.out_point - self.in_point
+            cmd = [
+                FFMPEG, "-y",
+                "-ss", str(self.in_point),
+                "-i", self.source,
+                "-t", str(duration),
+                "-c", "copy",
+                self.output_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
+            if result.returncode == 0:
+                self.finished.emit(self.output_path)
+            else:
+                self.error.emit(result.stderr.decode(errors="replace")[-500:])
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+# ---------------------------------------------------------------------------
+# check_ffmpeg_available
+# ---------------------------------------------------------------------------
+
+def check_ffmpeg_available() -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            [FFMPEG, "-version"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            first_line = result.stdout.splitlines()[0] if result.stdout else "ffmpeg found"
+            return True, first_line
+        return False, "ffmpeg returned non-zero"
+    except FileNotFoundError:
+        return False, "ffmpeg not found — install it and ensure it is on your PATH"
+    except subprocess.TimeoutExpired:
+        return False, "ffmpeg timed out"

@@ -1,0 +1,473 @@
+"""
+TimelineWidget — QGraphicsView-based NLE timeline.
+
+Tracks are horizontal rows. Clips are draggable rectangles.
+A vertical playhead line follows the current position.
+"""
+
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGraphicsView,
+    QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem,
+    QGraphicsLineItem, QLabel, QPushButton, QScrollBar,
+    QSizePolicy, QMenu, QGraphicsItem
+)
+from PyQt6.QtCore import (
+    Qt, QRectF, QPointF, pyqtSignal, QTimer
+)
+from PyQt6.QtGui import (
+    QColor, QPen, QBrush, QFont, QPainter, QLinearGradient,
+    QCursor
+)
+
+from .ClipModel import (
+    Clip, Track, Project, TrackType, ClipType,
+    seconds_to_tc, next_clip_colour
+)
+
+# ---------------------------------------------------------------------------
+# Layout constants
+# ---------------------------------------------------------------------------
+
+TRACK_HEIGHT   = 44       # px per track row
+HEADER_WIDTH   = 60       # px for track name column on left
+RULER_HEIGHT   = 24       # px for time ruler at top
+MIN_CLIP_WIDTH = 4        # px — minimum visual width before label hidden
+PIXELS_PER_SEC = 80.0     # default zoom (pixels per second of media)
+
+# ---------------------------------------------------------------------------
+# Colours
+# ---------------------------------------------------------------------------
+
+C_BG           = QColor("#1A1A1A")
+C_TRACK_EVEN   = QColor("#212121")
+C_TRACK_ODD    = QColor("#1E1E1E")
+C_TRACK_BORDER = QColor("#2A2A2A")
+C_RULER_BG     = QColor("#161616")
+C_RULER_TICK   = QColor("#444444")
+C_RULER_TEXT   = QColor("#777777")
+C_PLAYHEAD     = QColor("#E04040")
+C_CLIP_BORDER  = QColor("#000000")
+C_CLIP_LABEL   = QColor("#FFFFFF")
+C_SELECTED     = QColor("#FFFFFF")
+C_HEADER_BG    = QColor("#161616")
+C_HEADER_TEXT  = QColor("#888888")
+
+
+# ---------------------------------------------------------------------------
+# ClipItem — a clip rectangle on the scene
+# ---------------------------------------------------------------------------
+
+class ClipItem(QGraphicsRectItem):
+    """Draggable clip block on the timeline."""
+
+    def __init__(self, clip: Clip, track_y: float, pps: float, parent=None):
+        x      = HEADER_WIDTH + clip.timeline_position * pps
+        y      = RULER_HEIGHT + track_y
+        w      = max(MIN_CLIP_WIDTH, clip.source_duration * pps)
+        h      = TRACK_HEIGHT - 2
+
+        super().__init__(QRectF(0, 0, w, h), parent)
+        self.setPos(x, y)
+
+        self.clip       = clip
+        self.pps        = pps
+        self._track_y   = track_y
+        self._drag_start_x = 0.0
+
+        # Appearance
+        colour = QColor(clip.color)
+        grad = QLinearGradient(0, 0, 0, h)
+        grad.setColorAt(0.0, colour.lighter(130))
+        grad.setColorAt(1.0, colour)
+        self.setBrush(QBrush(grad))
+        self.setPen(QPen(C_CLIP_BORDER, 1))
+
+        # Label
+        self._label = QGraphicsTextItem(clip.display_name, self)
+        self._label.setDefaultTextColor(C_CLIP_LABEL)
+        font = QFont("Segoe UI", 8)
+        font.setBold(True)
+        self._label.setFont(font)
+        self._label.setPos(4, (h - self._label.boundingRect().height()) / 2)
+
+        # Clip label to the clip rect
+        self._label.setTextWidth(w - 8)
+
+        # Interaction
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
+            QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            # Constrain to horizontal movement only (lock Y to track row)
+            new_pos = QPointF(value)
+            new_x   = max(HEADER_WIDTH, new_pos.x())
+            return QPointF(new_x, self.pos().y())
+        return super().itemChange(change, value)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        # Snap clip model to new position
+        new_x = self.pos().x()
+        new_timeline_pos = (new_x - HEADER_WIDTH) / self.pps
+        self.clip.timeline_position = max(0.0, new_timeline_pos)
+
+    def update_pps(self, pps: float):
+        """Re-layout clip when zoom changes."""
+        self.pps = pps
+        x = HEADER_WIDTH + self.clip.timeline_position * pps
+        w = max(MIN_CLIP_WIDTH, self.clip.source_duration * pps)
+        self.setPos(x, self.pos().y())
+        self.setRect(QRectF(0, 0, w, TRACK_HEIGHT - 2))
+        self._label.setTextWidth(w - 8)
+
+
+# ---------------------------------------------------------------------------
+# PlayheadItem
+# ---------------------------------------------------------------------------
+
+class PlayheadItem(QGraphicsLineItem):
+    def __init__(self, scene_height: float):
+        super().__init__(0, 0, 0, scene_height)
+        pen = QPen(C_PLAYHEAD, 2)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        self.setZValue(100)
+
+    def set_position(self, x: float):
+        self.setX(x)
+
+
+# ---------------------------------------------------------------------------
+# TimelineScene
+# ---------------------------------------------------------------------------
+
+class TimelineScene(QGraphicsScene):
+    """
+    The QGraphicsScene that holds ruler, track backgrounds, clips, playhead.
+    """
+
+    clip_selected  = pyqtSignal(object)    # Clip
+    clip_moved     = pyqtSignal(object)    # Clip
+    seek_requested = pyqtSignal(float)     # seconds
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.project: Project | None = None
+        self.pps      = PIXELS_PER_SEC
+        self._clip_items: dict[str, ClipItem] = {}
+        self.playhead: PlayheadItem | None    = None
+
+    def load_project(self, project: Project):
+        self.project = project
+        self.redraw()
+
+    def redraw(self):
+        self.clear()
+        self._clip_items.clear()
+        if not self.project:
+            return
+
+        num_tracks  = len(self.project.tracks)
+        total_sec   = max(self.project.duration + 10, 60)
+        scene_w     = HEADER_WIDTH + total_sec * self.pps
+        scene_h     = RULER_HEIGHT + num_tracks * TRACK_HEIGHT
+
+        self.setSceneRect(0, 0, scene_w, scene_h)
+
+        self._draw_ruler(scene_w, total_sec)
+        self._draw_tracks(num_tracks, scene_w)
+        self._draw_clips()
+        self._draw_playhead(scene_h)
+
+    def _draw_ruler(self, scene_w: float, total_sec: float):
+        # Background
+        ruler_bg = self.addRect(
+            QRectF(0, 0, scene_w, RULER_HEIGHT),
+            QPen(Qt.PenStyle.NoPen), QBrush(C_RULER_BG)
+        )
+        ruler_bg.setZValue(1)
+
+        # Header corner
+        corner = self.addRect(
+            QRectF(0, 0, HEADER_WIDTH, RULER_HEIGHT),
+            QPen(Qt.PenStyle.NoPen), QBrush(QColor("#111111"))
+        )
+        corner.setZValue(2)
+
+        # Ticks — adaptive spacing
+        tick_interval = self._tick_interval()
+        t = 0.0
+        font = QFont("Consolas", 8)
+        while t <= total_sec + tick_interval:
+            x = HEADER_WIDTH + t * self.pps
+            is_major = (round(t * 10) % max(1, round(tick_interval * 10 * 5))) == 0
+
+            tick_h = 8 if is_major else 4
+            tick_pen = QPen(C_RULER_TICK.lighter(130) if is_major else C_RULER_TICK, 1)
+            line = self.addLine(x, RULER_HEIGHT - tick_h, x, RULER_HEIGHT, tick_pen)
+            line.setZValue(2)
+
+            if is_major:
+                label = self.addText(seconds_to_tc(t)[:8], font)
+                label.setDefaultTextColor(C_RULER_TEXT)
+                label.setPos(x + 2, 2)
+                label.setZValue(2)
+
+            t += tick_interval
+
+    def _tick_interval(self) -> float:
+        """Return a sensible tick interval in seconds based on current zoom."""
+        sec_per_100px = 100 / self.pps
+        for interval in [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600]:
+            if sec_per_100px <= interval * 2:
+                return interval
+        return 600
+
+    def _draw_tracks(self, num_tracks: int, scene_w: float):
+        for i, track in enumerate(self.project.tracks):
+            y    = RULER_HEIGHT + i * TRACK_HEIGHT
+            bg   = C_TRACK_EVEN if i % 2 == 0 else C_TRACK_ODD
+
+            # Track background
+            self.addRect(
+                QRectF(HEADER_WIDTH, y, scene_w, TRACK_HEIGHT),
+                QPen(C_TRACK_BORDER, 1), QBrush(bg)
+            ).setZValue(0)
+
+            # Track header
+            header = self.addRect(
+                QRectF(0, y, HEADER_WIDTH, TRACK_HEIGHT),
+                QPen(C_TRACK_BORDER, 1), QBrush(C_HEADER_BG)
+            )
+            header.setZValue(1)
+
+            label = self.addText(track.name, QFont("Segoe UI", 9, QFont.Weight.Bold))
+            label.setDefaultTextColor(C_HEADER_TEXT)
+            label.setPos(6, y + (TRACK_HEIGHT - label.boundingRect().height()) / 2)
+            label.setZValue(2)
+
+    def _draw_clips(self):
+        if not self.project:
+            return
+        track_map = {t.track_id: i for i, t in enumerate(self.project.tracks)}
+
+        for clip in self.project.clips:
+            track_y = clip.track_index * TRACK_HEIGHT
+            ci = ClipItem(clip, track_y, self.pps)
+            self.addItem(ci)
+            self._clip_items[clip.clip_id] = ci
+
+    def _draw_playhead(self, scene_h: float):
+        self.playhead = PlayheadItem(scene_h)
+        self.playhead.setX(HEADER_WIDTH)
+        self.addItem(self.playhead)
+
+    # ---- public ----
+
+    def set_playhead(self, seconds: float):
+        if self.playhead:
+            x = HEADER_WIDTH + seconds * self.pps
+            self.playhead.setX(x)
+
+    def set_zoom(self, pps: float):
+        self.pps = pps
+        self.redraw()
+
+    def add_clip_item(self, clip: Clip):
+        if not self.project:
+            return
+        track_y = clip.track_index * TRACK_HEIGHT
+        ci = ClipItem(clip, track_y, self.pps)
+        self.addItem(ci)
+        self._clip_items[clip.clip_id] = ci
+        # Extend scene if needed
+        total_sec = max(self.project.duration + 10, 60)
+        scene_w   = HEADER_WIDTH + total_sec * self.pps
+        scene_h   = RULER_HEIGHT + len(self.project.tracks) * TRACK_HEIGHT
+        self.setSceneRect(0, 0, scene_w, scene_h)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.scenePos()
+            # Click on ruler → seek
+            if pos.y() < RULER_HEIGHT:
+                seconds = max(0.0, (pos.x() - HEADER_WIDTH) / self.pps)
+                self.set_playhead(seconds)
+                self.seek_requested.emit(seconds)
+                return
+        super().mousePressEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# TimelineWidget  — the full timeline panel
+# ---------------------------------------------------------------------------
+
+TIMELINE_STYLE = """
+QWidget#TimelinePanel {
+    background: #1A1A1A;
+    border-top: 1px solid #2A2A2A;
+}
+QPushButton#TLBtn {
+    background: #252525;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: #AAAAAA;
+    font-size: 11px;
+    padding: 3px 8px;
+    min-height: 22px;
+}
+QPushButton#TLBtn:hover {
+    background: #2D2D2D;
+    color: #FFFFFF;
+    border-color: #4A90D9;
+}
+QGraphicsView {
+    background: #1A1A1A;
+    border: none;
+}
+QLabel#TLLabel {
+    color: #666;
+    font-size: 11px;
+    padding: 0 6px;
+}
+"""
+
+
+class TimelineWidget(QWidget):
+    """
+    Full timeline panel — toolbar + QGraphicsView.
+    """
+
+    seek_requested  = pyqtSignal(float)
+    clip_added      = pyqtSignal(object)    # Clip
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("TimelinePanel")
+        self.setStyleSheet(TIMELINE_STYLE)
+        self.setMinimumHeight(120)
+
+        self.project: Project | None = None
+        self._pps = PIXELS_PER_SEC
+
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Toolbar
+        toolbar = QWidget()
+        toolbar.setStyleSheet("background:#161616; border-bottom:1px solid #2A2A2A;")
+        toolbar.setFixedHeight(32)
+        tbar_layout = QHBoxLayout(toolbar)
+        tbar_layout.setContentsMargins(8, 4, 8, 4)
+        tbar_layout.setSpacing(4)
+
+        def _btn(text, tip):
+            b = QPushButton(text)
+            b.setObjectName("TLBtn")
+            b.setToolTip(tip)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            return b
+
+        self.btn_split  = _btn("✂  Split",  "Split clip at playhead  [S]")
+        self.btn_delete = _btn("🗑  Delete", "Delete selected clip  [Del]")
+        self.btn_zoom_in  = _btn("🔍+", "Zoom In  [+]")
+        self.btn_zoom_out = _btn("🔍−", "Zoom Out  [−]")
+        self.btn_fit      = _btn("⟷ Fit", "Fit timeline to window")
+
+        tbar_layout.addWidget(self.btn_split)
+        tbar_layout.addWidget(self.btn_delete)
+        tbar_layout.addSpacing(8)
+        tbar_layout.addWidget(self.btn_zoom_in)
+        tbar_layout.addWidget(self.btn_zoom_out)
+        tbar_layout.addWidget(self.btn_fit)
+        tbar_layout.addStretch()
+
+        self.lbl_info = QLabel("No project loaded")
+        self.lbl_info.setObjectName("TLLabel")
+        tbar_layout.addWidget(self.lbl_info)
+
+        layout.addWidget(toolbar)
+
+        # Scene + View
+        self.scene = TimelineScene(self)
+        self.scene.seek_requested.connect(self.seek_requested)
+
+        self.view = QGraphicsView(self.scene)
+        self.view.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.view.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self.view, stretch=1)
+
+        # Connect toolbar buttons
+        self.btn_zoom_in.clicked.connect(self._zoom_in)
+        self.btn_zoom_out.clicked.connect(self._zoom_out)
+        self.btn_fit.clicked.connect(self._zoom_fit)
+        self.btn_delete.clicked.connect(self._delete_selected)
+
+    # -------------------------------------------------------------------------
+    # Public API
+    # -------------------------------------------------------------------------
+
+    def load_project(self, project: Project):
+        self.project = project
+        self.scene.load_project(project)
+        self._update_info()
+
+    def set_playhead(self, seconds: float):
+        self.scene.set_playhead(seconds)
+
+    def add_clip(self, clip: Clip):
+        """Add a clip to the timeline (already added to project.clips by caller)."""
+        self.scene.add_clip_item(clip)
+        self._update_info()
+
+    # -------------------------------------------------------------------------
+    # Zoom
+    # -------------------------------------------------------------------------
+
+    def _zoom_in(self):
+        self._pps = min(self._pps * 1.5, 2000)
+        self.scene.set_zoom(self._pps)
+
+    def _zoom_out(self):
+        self._pps = max(self._pps / 1.5, 4)
+        self.scene.set_zoom(self._pps)
+
+    def _zoom_fit(self):
+        if not self.project or not self.project.duration:
+            return
+        available = self.view.width() - HEADER_WIDTH - 20
+        self._pps  = available / self.project.duration
+        self.scene.set_zoom(self._pps)
+
+    # -------------------------------------------------------------------------
+    # Edit actions
+    # -------------------------------------------------------------------------
+
+    def _delete_selected(self):
+        if not self.project:
+            return
+        for item in self.scene.selectedItems():
+            if isinstance(item, ClipItem):
+                self.project.remove_clip(item.clip.clip_id)
+                self.scene.removeItem(item)
+        self._update_info()
+
+    # -------------------------------------------------------------------------
+
+    def _update_info(self):
+        if self.project:
+            n = len(self.project.clips)
+            self.lbl_info.setText(f"{n} clip{'s' if n != 1 else ''}  •  {self.project.duration_tc}")
+        else:
+            self.lbl_info.setText("No project loaded")
