@@ -33,6 +33,9 @@ from .MediaBin import MediaBin, BinItem
 from .PreviewWidget import PreviewWidget
 from .TimelineWidget import TimelineWidget
 from .FFmpegWorker import check_ffmpeg_available
+from .WhisperWorker import WhisperWorker
+from .WhisperDialog import WhisperDialog
+from .TranscriptPanel import TranscriptPanel
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +141,9 @@ class VideoEditorWidget(QWidget):
         # FFmpeg check
         self._ffmpeg_ok, self._ffmpeg_msg = check_ffmpeg_available()
 
+        # Whisper worker tracking (REQUIRED — GC kills workers without a reference)
+        self._whisper_workers: list = []
+
         self._build_ui()
         self._connect_signals()
         self._setup_shortcuts()
@@ -160,23 +166,29 @@ class VideoEditorWidget(QWidget):
         main_splitter.setHandleWidth(3)
 
         # Upper area (horizontal: bin + preview)
-        upper_splitter = QSplitter(Qt.Orientation.Horizontal)
-        upper_splitter.setHandleWidth(3)
+        self._upper_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._upper_splitter.setHandleWidth(3)
 
         # Media Bin
         self.media_bin = MediaBin()
-        upper_splitter.addWidget(self.media_bin)
+        self._upper_splitter.addWidget(self.media_bin)
 
         # Preview
         self.preview = PreviewWidget()
-        upper_splitter.addWidget(self.preview)
+        self._upper_splitter.addWidget(self.preview)
 
-        # Proportions: bin ~220px, preview takes rest
-        upper_splitter.setSizes([220, 9999])
-        upper_splitter.setStretchFactor(0, 0)
-        upper_splitter.setStretchFactor(1, 1)
+        # Transcript panel (right side, hidden until first transcription)
+        self.transcript_panel = TranscriptPanel()
+        self.transcript_panel.hide()
+        self._upper_splitter.addWidget(self.transcript_panel)
 
-        main_splitter.addWidget(upper_splitter)
+        # Proportions: bin ~220px, preview takes rest, transcript collapsed
+        self._upper_splitter.setSizes([220, 9999, 0])
+        self._upper_splitter.setStretchFactor(0, 0)
+        self._upper_splitter.setStretchFactor(1, 1)
+        self._upper_splitter.setStretchFactor(2, 0)
+
+        main_splitter.addWidget(self._upper_splitter)
 
         # Timeline
         self.timeline = TimelineWidget()
@@ -228,6 +240,7 @@ class VideoEditorWidget(QWidget):
         self.btn_save    = _btn("💾 Save",   "Save project  [Ctrl+S]")
         self.btn_import  = _btn("＋ Import", "Import media files")
         self.btn_url     = _btn("🌐 URL Import", "Import from YouTube, Kick, TikTok, Twitch and more…")
+        self.btn_transcribe = _btn("🎙 Transcribe", "Transcribe audio with Whisper AI")
         self.btn_export  = _btn("▶ Export", "Export / render timeline", accent=True)
 
         layout.addWidget(self.btn_new)
@@ -236,6 +249,8 @@ class VideoEditorWidget(QWidget):
         layout.addWidget(_sep())
         layout.addWidget(self.btn_import)
         layout.addWidget(self.btn_url)
+        layout.addWidget(_sep())
+        layout.addWidget(self.btn_transcribe)
         layout.addWidget(_sep())
         layout.addWidget(self.btn_export)
         layout.addStretch()
@@ -270,6 +285,11 @@ class VideoEditorWidget(QWidget):
         self.btn_import.clicked.connect(self.media_bin.import_media)
         self.btn_url.clicked.connect(self._url_import)
         self.btn_export.clicked.connect(self._export)
+        self.btn_transcribe.clicked.connect(self._transcribe)
+
+        # Transcript panel → preview seek + close
+        self.transcript_panel.seek_requested.connect(self._on_seek)
+        self.transcript_panel.close_requested.connect(self._hide_transcript_panel)
 
         # Media bin → preview + timeline
         self.media_bin.clip_selected.connect(self._on_bin_clip_selected)
@@ -434,7 +454,115 @@ class VideoEditorWidget(QWidget):
             QMessageBox.critical(self, "Save Failed", str(e))
 
     # =========================================================================
-    # Export
+    # Whisper transcription
+    # =========================================================================
+
+    def _transcribe(self):
+        """Open model-picker dialog then launch WhisperWorker on the selected clip."""
+        # Check faster-whisper is available before opening the dialog
+        try:
+            import faster_whisper  # noqa: F401
+        except ImportError:
+            QMessageBox.warning(
+                self,
+                "faster-whisper Not Installed",
+                "The Whisper transcription feature requires the faster-whisper package.\n\n"
+                "Install it by running:\n\n"
+                "    pip install faster-whisper\n\n"
+                "Then restart the application."
+            )
+            return
+
+        # Find currently selected bin clip (if any)
+        bin_path: str | None = None
+        bin_name: str | None = None
+        selected_items = self.media_bin.clip_list.selectedItems()
+        if selected_items:
+            from PyQt6.QtCore import Qt as _Qt
+            path = selected_items[0].data(_Qt.ItemDataRole.UserRole)
+            if path:
+                bin_path = path
+                bin_name = self.media_bin._items[path].name if path in self.media_bin._items else path
+
+        dlg = WhisperDialog(bin_path=bin_path, bin_name=bin_name, parent=self)
+        if dlg.exec() != WhisperDialog.DialogCode.Accepted:
+            return
+
+        source_path = dlg.selected_source
+        if not source_path:
+            return
+
+        # Get duration for progress reporting
+        source_duration = 0.0
+        if source_path in self.media_bin._items:
+            item = self.media_bin._items[source_path]
+            if item.info:
+                source_duration = item.info.duration
+
+        # Show the transcript panel.
+        # Qt6 ignores setSizes on a hidden splitter widget; must show first then
+        # defer setSizes past the current event loop tick via QTimer.singleShot.
+        self.transcript_panel.clear()
+        self.transcript_panel.show()
+
+        def _resize_splitter():
+            sizes = self._upper_splitter.sizes()
+            total = sum(sizes)
+            panel_width   = min(300, max(240, total // 4))
+            bin_width     = sizes[0] if sizes else 220
+            preview_width = max(200, total - bin_width - panel_width)
+            self._upper_splitter.setSizes([bin_width, preview_width, panel_width])
+
+        from PyQt6.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(0, _resize_splitter)
+        self.transcript_panel.set_status(
+            f"Transcribing with '{dlg.selected_model}' model…"
+        )
+        self.transcript_panel.set_progress(0.0)
+
+        # Launch worker
+        worker = WhisperWorker(
+            source_path     = source_path,
+            model_size      = dlg.selected_model,
+            language        = dlg.selected_language,
+            source_duration = source_duration,
+            parent          = self,
+        )
+        worker.vad_filter = dlg.selected_vad
+        worker.segment_ready.connect(self.transcript_panel.add_segment)
+        worker.progress.connect(self.transcript_panel.set_progress)
+        worker.finished.connect(self._on_whisper_finished)
+        worker.error.connect(self._on_whisper_error)
+        worker.start()
+        self._whisper_workers.append(worker)
+
+        self.plugin.api.show_status_message("🎙 Transcription started…", 2000)
+
+    def _on_whisper_finished(self, segments: list):
+        n = len(segments)
+        self.transcript_panel.set_status(f"{n} segment{'s' if n != 1 else ''} transcribed")
+        self.plugin.api.show_status_message(
+            f"🎙 Transcription complete — {n} segment{'s' if n != 1 else ''}", 3000
+        )
+        # Clean up finished workers
+        self._whisper_workers = [w for w in self._whisper_workers if w.isRunning()]
+
+    def _on_whisper_error(self, message: str):
+        self.transcript_panel.set_status(f"⚠ Error: {message}")
+        self.transcript_panel.set_progress(1.0)
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.warning(self, "Transcription Failed", message)
+        self._whisper_workers = [w for w in self._whisper_workers if w.isRunning()]
+
+    def _hide_transcript_panel(self):
+        """Collapse the transcript panel back into the splitter."""
+        self.transcript_panel.hide()
+        sizes = self._upper_splitter.sizes()
+        total = sum(sizes)
+        self._upper_splitter.setSizes([sizes[0], total - sizes[0], 0])
+
+    # =========================================================================
+    # URL import
     # =========================================================================
 
     def _url_import(self):
@@ -504,5 +632,12 @@ class VideoEditorWidget(QWidget):
     # =========================================================================
 
     def cleanup(self):
+        for w in self._whisper_workers:
+            try:
+                w.cancel()
+                w.quit()
+                w.wait(500)
+            except Exception:
+                pass
         self.preview.cleanup()
         self.media_bin.cleanup()
