@@ -24,6 +24,7 @@ REQUIREMENTS=(
   argon2-cffi-bindings
   psycopg
   yt-dlp
+  faster-whisper
 )
 
 # ----------------------------
