@@ -14,14 +14,14 @@ from PyQt6.QtWidgets import (
     QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem,
     QGraphicsLineItem, QLabel, QPushButton, QScrollBar,
     QSizePolicy, QMenu, QGraphicsItem, QGraphicsProxyWidget,
-    QToolButton, QFrame
+    QToolButton, QFrame, QInputDialog
 )
 from PyQt6.QtCore import (
     Qt, QRectF, QPointF, pyqtSignal, QTimer
 )
 from PyQt6.QtGui import (
     QColor, QPen, QBrush, QFont, QPainter, QLinearGradient,
-    QCursor
+    QCursor, QAction
 )
 
 from .ClipModel import (
@@ -73,11 +73,22 @@ class ClipItem(QGraphicsRectItem):
     Supports:
     - Horizontal drag → retime (change timeline_position)
     - Vertical drag → move to a different track of the SAME type
-      (video clips can only land on video tracks, audio on audio tracks)
+    - Left/right edge drag → trim in_point / out_point
+
+    Trim zones: the leftmost and rightmost TRIM_ZONE_PX pixels of the clip
+    rect act as resize handles. The cursor changes to a resize arrow when
+    hovering over them, and a drag from that zone trims rather than moves.
     """
 
+    TRIM_ZONE_PX = 8   # width of the hot-zone at each edge
+
+    # Internal drag mode
+    _MODE_MOVE       = "move"
+    _MODE_TRIM_START = "trim_start"
+    _MODE_TRIM_END   = "trim_end"
+
     def __init__(self, clip: Clip, scene_ref, parent=None):
-        self._scene_ref = scene_ref   # back-reference to TimelineScene for track lookups
+        self._scene_ref = scene_ref
         track_y = scene_ref.track_y_for(clip.track_type, clip.track_index)
 
         x = HEADER_WIDTH + clip.timeline_position * scene_ref.pps
@@ -91,6 +102,12 @@ class ClipItem(QGraphicsRectItem):
         self.clip = clip
         self.pps  = scene_ref.pps
 
+        self._drag_mode      = self._MODE_MOVE
+        self._drag_start_x   = 0.0   # scene X at press
+        self._orig_tl_pos    = 0.0   # clip.timeline_position at press
+        self._orig_in_point  = 0.0   # clip.in_point at press
+        self._orig_out_point = 0.0   # clip.out_point at press
+
         self._build_appearance(w, h)
 
         self.setFlags(
@@ -98,7 +115,12 @@ class ClipItem(QGraphicsRectItem):
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
             QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
+        self.setAcceptHoverEvents(True)
         self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+
+    # ------------------------------------------------------------------
+    # Appearance
+    # ------------------------------------------------------------------
 
     def _build_appearance(self, w: float, h: float):
         colour = QColor(self.clip.color)
@@ -116,12 +138,132 @@ class ClipItem(QGraphicsRectItem):
         self._label.setPos(4, (h - self._label.boundingRect().height()) / 2)
         self._label.setTextWidth(max(4, w - 8))
 
+    def _rebuild(self):
+        """Recompute geometry after a trim and update child label."""
+        w = max(MIN_CLIP_WIDTH, self.clip.source_duration * self.pps)
+        h = TRACK_HEIGHT - 2
+        self.setRect(QRectF(0, 0, w, h))
+        self._build_appearance(w, h)
+
+    # ------------------------------------------------------------------
+    # Hover — change cursor when over trim zones
+    # ------------------------------------------------------------------
+
+    def _trim_mode_at(self, local_x: float) -> str:
+        w = self.rect().width()
+        if local_x <= self.TRIM_ZONE_PX:
+            return self._MODE_TRIM_START
+        if local_x >= w - self.TRIM_ZONE_PX:
+            return self._MODE_TRIM_END
+        return self._MODE_MOVE
+
+    def hoverMoveEvent(self, event):
+        mode = self._trim_mode_at(event.pos().x())
+        if mode in (self._MODE_TRIM_START, self._MODE_TRIM_END):
+            self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+        else:
+            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+        super().hoverLeaveEvent(event)
+
+    # ------------------------------------------------------------------
+    # Mouse events
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+
+        local_x = event.pos().x()
+        self._drag_mode      = self._trim_mode_at(local_x)
+        self._drag_start_x   = event.scenePos().x()
+        self._orig_tl_pos    = self.clip.timeline_position
+        self._orig_in_point  = self.clip.in_point
+        self._orig_out_point = self.clip.out_point
+
+        if self._drag_mode == self._MODE_MOVE:
+            self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+            # Let QGraphicsItem handle normal move drag
+            super().mousePressEvent(event)
+        else:
+            # Trim drag: we handle it ourselves, don't call super
+            # (super would start a move drag which conflicts)
+            self.setSelected(True)
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_mode == self._MODE_MOVE:
+            super().mouseMoveEvent(event)
+            return
+
+        # --- Trim drag ---
+        delta_px  = event.scenePos().x() - self._drag_start_x
+        delta_sec = delta_px / self.pps
+
+        if self._drag_mode == self._MODE_TRIM_START:
+            new_in = self._orig_in_point + delta_sec
+            # Clamp: can't trim past timeline start or past out_point
+            max_in = self._orig_out_point - Clip.MIN_CLIP_DURATION
+            new_in = max(0.0, min(new_in, max_in))
+            # Apply to data model
+            in_delta = new_in - self.clip.in_point
+            self.clip.in_point          = new_in
+            self.clip.timeline_position += in_delta
+            # Reposition the item on screen
+            new_scene_x = HEADER_WIDTH + self.clip.timeline_position * self.pps
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, False)
+            self.setX(new_scene_x)
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+
+        elif self._drag_mode == self._MODE_TRIM_END:
+            new_out = self._orig_out_point + delta_sec
+            min_out = self._orig_in_point + Clip.MIN_CLIP_DURATION
+            new_out = max(min_out, min(new_out, self.clip.media_duration))
+            self.clip.out_point = new_out
+
+        # Update visual width
+        w = max(MIN_CLIP_WIDTH, self.clip.source_duration * self.pps)
+        self.setRect(QRectF(0, 0, w, TRACK_HEIGHT - 2))
+        self._label.setTextWidth(max(4, w - 8))
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_mode == self._MODE_MOVE:
+            super().mouseReleaseEvent(event)
+            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+
+            # Commit horizontal position
+            new_x = self.pos().x()
+            self.clip.timeline_position = max(0.0, (new_x - HEADER_WIDTH) / self.pps)
+
+            # Commit vertical position → which track did we land on?
+            track_index = self._scene_ref.track_index_at_y(
+                self.clip.track_type, self.pos().y()
+            )
+            if track_index is not None:
+                self.clip.track_index = track_index
+        else:
+            # Trim done — rebuild appearance for cleanliness
+            self._rebuild()
+            self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+            event.accept()
+
+        self._scene_ref.clip_moved.emit(self.clip)
+
+    # ------------------------------------------------------------------
+    # itemChange — only used during MOVE drags
+    # ------------------------------------------------------------------
+
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            if self._drag_mode != self._MODE_MOVE:
+                return value   # let trim handle its own positioning
             new_pos = QPointF(value)
             new_x   = max(HEADER_WIDTH, new_pos.x())
-
-            # Vertical: snap to nearest valid track row of the SAME type
             snapped_y = self._scene_ref.snap_y_for_drag(
                 self.clip.track_type, new_pos.y()
             )
@@ -133,26 +275,9 @@ class ClipItem(QGraphicsRectItem):
 
         return super().itemChange(change, value)
 
-    def mousePressEvent(self, event):
-        self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
-
-        # Commit horizontal position
-        new_x = self.pos().x()
-        self.clip.timeline_position = max(0.0, (new_x - HEADER_WIDTH) / self.pps)
-
-        # Commit vertical position → which track did we land on?
-        track_index = self._scene_ref.track_index_at_y(
-            self.clip.track_type, self.pos().y()
-        )
-        if track_index is not None:
-            self.clip.track_index = track_index
-
-        self._scene_ref.clip_moved.emit(self.clip)
+    # ------------------------------------------------------------------
+    # Zoom update
+    # ------------------------------------------------------------------
 
     def update_pps(self, pps: float):
         """Re-layout clip when zoom changes."""
@@ -164,6 +289,126 @@ class ClipItem(QGraphicsRectItem):
         self.setPos(x, y)
         self.setRect(QRectF(0, 0, w, TRACK_HEIGHT - 2))
         self._label.setTextWidth(max(4, w - 8))
+
+    # ------------------------------------------------------------------
+    # Context menu — right-click
+    # ------------------------------------------------------------------
+
+    def contextMenuEvent(self, event):
+        clip = self.clip
+
+        from pathlib import Path as _Path
+        from .ClipModel import ClipType as _CT, seconds_to_tc as _tc
+
+        # Click position and playhead position in seconds
+        click_seconds    = max(0.0, (event.scenePos().x() - HEADER_WIDTH) / self.pps)
+        playhead_seconds = self._scene_ref.get_playhead_seconds()
+
+        type_label = {
+            _CT.VIDEO: "🎬 Video",
+            _CT.AUDIO: "🎵 Audio",
+            _CT.IMAGE: "🖼 Image",
+        }.get(clip.clip_type, clip.clip_type)
+
+        menu = QMenu()
+        menu.setStyleSheet("""
+            QMenu {
+                background: #1E1E1E;
+                border: 1px solid #3A3A3A;
+                border-radius: 4px;
+                color: #CCCCCC;
+                font-size: 12px;
+                padding: 4px 0;
+            }
+            QMenu::item { padding: 5px 18px 5px 12px; }
+            QMenu::item:selected { background: #2A4A70; color: #FFFFFF; }
+            QMenu::item:disabled { color: #555555; }
+            QMenu::separator { height: 1px; background: #333333; margin: 3px 8px; }
+        """)
+
+        def _info(text: str):
+            a = QAction(text, menu)
+            a.setEnabled(False)
+            menu.addAction(a)
+
+        # ---- Info header ----
+        _info(f"  {clip.display_name}")
+        menu.addSeparator()
+        _info(f"  {type_label}")
+        _info(f"  Source duration   {_tc(clip.media_duration)}")
+        _info(f"  In point          {_tc(clip.in_point)}")
+        _info(f"  Out point         {_tc(clip.out_point)}")
+        _info(f"  Trimmed duration  {_tc(clip.source_duration)}")
+        _info(f"  Timeline pos      {_tc(clip.timeline_position)}")
+        _info(f"  Track             {clip.track_type.upper()} {clip.track_index + 1}")
+
+        menu.addSeparator()
+
+        # ---- Split here (at right-click position) ----
+        can_split_here = (clip.timeline_position + 0.1 < click_seconds <
+                          clip.timeline_end - 0.1)
+        act_split_here = QAction(f"✂  Split here  ({_tc(click_seconds)})", menu)
+        act_split_here.setEnabled(can_split_here)
+        menu.addAction(act_split_here)
+
+        # ---- Split at playhead ----
+        can_split_playhead = (clip.timeline_position + 0.1 < playhead_seconds <
+                              clip.timeline_end - 0.1)
+        act_split_playhead = QAction(f"✂  Split at playhead  ({_tc(playhead_seconds)})", menu)
+        act_split_playhead.setEnabled(can_split_playhead)
+        menu.addAction(act_split_playhead)
+
+        act_rename = QAction("✏  Rename clip…", menu)
+        menu.addAction(act_rename)
+
+        menu.addSeparator()
+
+        act_delete = QAction("🗑  Delete clip", menu)
+        menu.addAction(act_delete)
+
+        # screenPos() returns QPoint directly in PyQt6 — no .toPoint() needed
+        chosen = menu.exec(event.screenPos())
+
+        def _do_split(split_at: float):
+            right = self._scene_ref.project.split_clip(clip.clip_id, split_at)
+            if right is not None:
+                for ci in self._scene_ref._clip_items.values():
+                    ci.update_pps(self.pps)
+                ci_right = ClipItem(right, self._scene_ref)
+                self._scene_ref.addItem(ci_right)
+                self._scene_ref._clip_items[right.clip_id] = ci_right
+                self._scene_ref.clip_split.emit(right)
+                self._scene_ref.track_changed.emit()
+
+        if chosen == act_split_here:
+            _do_split(click_seconds)
+            # Move playhead to the split point so the preview engine re-evaluates
+            # its clip state — without this the playhead stays inside the old left
+            # clip, _tl_clip still matches, and the gap is silently skipped.
+            self._scene_ref.set_playhead(click_seconds)
+            self._scene_ref.seek_requested.emit(click_seconds)
+
+        elif chosen == act_split_playhead:
+            _do_split(playhead_seconds)
+
+        elif chosen == act_rename:
+            new_name, ok = QInputDialog.getText(
+                None,
+                "Rename Clip",
+                "Clip name:",
+                text=clip.label or _Path(clip.source_path).stem,
+            )
+            if ok and new_name.strip():
+                clip.label = new_name.strip()
+                self._label.setPlainText(clip.display_name)
+                self._scene_ref.clip_moved.emit(clip)
+
+        elif chosen == act_delete:
+            self._scene_ref.project.remove_clip(clip.clip_id)
+            self._scene_ref.removeItem(self)
+            self._scene_ref.track_changed.emit()
+
+        event.accept()
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +559,7 @@ class TimelineScene(QGraphicsScene):
 
     clip_selected  = pyqtSignal(object)    # Clip
     clip_moved     = pyqtSignal(object)    # Clip
+    clip_split     = pyqtSignal(object)    # new right-half Clip
     seek_requested = pyqtSignal(float)     # seconds
     track_changed  = pyqtSignal()          # any track add/remove/mute/lock
 
@@ -552,6 +798,65 @@ class TimelineScene(QGraphicsScene):
             x = HEADER_WIDTH + seconds * self.pps
             self.playhead.setX(x)
 
+    def get_playhead_seconds(self) -> float:
+        """Return current playhead position in seconds."""
+        if self.playhead:
+            return max(0.0, (self.playhead.x() - HEADER_WIDTH) / self.pps)
+        return 0.0
+
+    def split_at_playhead(self) -> bool:
+        """
+        Split whichever clip(s) the playhead currently intersects.
+
+        Walks all clips, finds any that contain the playhead position,
+        calls Project.split_clip(), adds the resulting right-half ClipItem
+        to the scene, and emits clip_split for each new half.
+
+        Returns True if at least one clip was split.
+        """
+        if not self.project:
+            return False
+
+        split_sec = self.get_playhead_seconds()
+        new_clips = []
+
+        # Collect candidates first (list may grow during loop — iterate a copy)
+        for clip in list(self.project.clips):
+            tl_start = clip.timeline_position
+            tl_end   = clip.timeline_end
+            if tl_start < split_sec < tl_end:
+                right = self.project.split_clip(clip.clip_id, split_sec)
+                if right is not None:
+                    new_clips.append(right)
+
+        for right in new_clips:
+            # Refresh the LEFT half's visual width (out_point shrank)
+            left_item = self._clip_items.get(
+                next(c.clip_id for c in self.project.clips
+                     if c.timeline_end == split_sec
+                     and c.track_index == right.track_index
+                     and c.track_type  == right.track_type),
+                None
+            )
+            # Simpler: just redraw all existing items at updated geometry
+            for cid, ci in self._clip_items.items():
+                ci.update_pps(self.pps)
+
+            # Add the right half as a new ClipItem
+            ci_right = ClipItem(right, self)
+            self.addItem(ci_right)
+            self._clip_items[right.clip_id] = ci_right
+            self.clip_split.emit(right)
+
+        # Expand scene rect if needed
+        if new_clips:
+            total_sec = max(self.project.duration + 10, 60)
+            scene_w   = HEADER_WIDTH + total_sec * self.pps
+            scene_h   = RULER_HEIGHT + max(len(self._track_order), 1) * TRACK_HEIGHT
+            self.setSceneRect(0, 0, scene_w, scene_h)
+
+        return bool(new_clips)
+
     def set_zoom(self, pps: float):
         self.pps = pps
         self.redraw()
@@ -723,6 +1028,7 @@ class TimelineWidget(QWidget):
         self.btn_zoom_out.clicked.connect(self._zoom_out)
         self.btn_fit.clicked.connect(self._zoom_fit)
         self.btn_delete.clicked.connect(self._delete_selected)
+        self.btn_split.clicked.connect(self._split_at_playhead)
         self.btn_add_v.clicked.connect(lambda: self._add_track(TrackType.VIDEO))
         self.btn_add_a.clicked.connect(lambda: self._add_track(TrackType.AUDIO))
 
@@ -788,6 +1094,15 @@ class TimelineWidget(QWidget):
                 self.project.remove_clip(item.clip.clip_id)
                 self.scene.removeItem(item)
         self._update_info()
+
+    def _split_at_playhead(self):
+        """Split clip(s) under the playhead. Bound to ✂ Split button and [S] key."""
+        if not self.project:
+            return
+        did_split = self.scene.split_at_playhead()
+        if did_split:
+            self._on_project_changed()
+        # If nothing was split (playhead not over a clip) the button is a no-op
 
     # -------------------------------------------------------------------------
 

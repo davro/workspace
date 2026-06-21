@@ -100,6 +100,44 @@ class Clip:
             return self.media_duration - self.in_point
         return 0.0
 
+    # ------------------------------------------------------------------
+    # Trim — adjust in/out points without touching the other clips
+    # ------------------------------------------------------------------
+
+    MIN_CLIP_DURATION = 0.1   # seconds — never allow a zero-length clip
+
+    def trim_start(self, new_in_point: float) -> None:
+        """
+        Drag the LEFT (start) edge of the clip.
+
+        The OUT point and its timeline position stay fixed;
+        the IN point moves and timeline_position adjusts accordingly
+        so the right edge remains anchored.
+
+            Before: |----[=========clip=========]---|
+            After:  |--------[=====clip=====]-------|
+                                ^ new left edge
+        """
+        max_in = self.out_point - self.MIN_CLIP_DURATION
+        new_in = max(0.0, min(new_in_point, max_in))
+        delta  = new_in - self.in_point   # positive = trimming inward
+        self.in_point         = new_in
+        self.timeline_position += delta   # left edge moves, right stays fixed
+
+    def trim_end(self, new_out_point: float) -> None:
+        """
+        Drag the RIGHT (end) edge of the clip.
+
+        The IN point and timeline_position stay fixed; only out_point moves.
+
+            Before: |----[=========clip=========]---|
+            After:  |----[=====clip=====]-----------|
+                                        ^ new right edge
+        """
+        min_out = self.in_point + self.MIN_CLIP_DURATION
+        new_out = max(min_out, min(new_out_point, self.media_duration))
+        self.out_point = new_out
+
     @property
     def timeline_end(self) -> float:
         return self.timeline_position + self.source_duration
@@ -165,6 +203,59 @@ class Project:
 
     def remove_clip(self, clip_id: str):
         self.clips = [c for c in self.clips if c.clip_id != clip_id]
+
+    def split_clip(self, clip_id: str, split_seconds: float) -> Optional["Clip"]:
+        """
+        Split a clip at a timeline position (split_seconds).
+
+        Returns the new RIGHT-half Clip (already inserted into self.clips),
+        or None if the split point is outside the clip or too close to either edge.
+
+        How media time maps to timeline time
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        The clip occupies [timeline_position, timeline_end] on the timeline.
+        The split point in media time is:
+
+            media_split = in_point + (split_seconds - timeline_position)
+
+        LEFT half  — original clip_id, out_point  → media_split
+        RIGHT half — new clip_id,     in_point    → media_split,
+                                      timeline_position → split_seconds
+        """
+        MIN = 0.1   # minimum duration for each half
+
+        clip = self.get_clip(clip_id)
+        if clip is None:
+            return None
+
+        tl_start = clip.timeline_position
+        tl_end   = clip.timeline_end
+
+        if split_seconds <= tl_start + MIN:
+            return None
+        if split_seconds >= tl_end   - MIN:
+            return None
+
+        media_split = clip.in_point + (split_seconds - tl_start)
+
+        # Mutate the LEFT half in place
+        original_out = clip.out_point
+        clip.out_point = media_split
+
+        # Build the RIGHT half
+        from dataclasses import replace as _dc_replace
+        right = _dc_replace(
+            clip,
+            clip_id           = str(uuid.uuid4())[:8],
+            in_point          = media_split,
+            out_point         = original_out,
+            timeline_position = split_seconds,
+        )
+
+        # Insert right immediately after left in the list
+        idx = self.clips.index(clip)
+        self.clips.insert(idx + 1, right)
+        return right
 
     def get_clip(self, clip_id: str) -> Optional[Clip]:
         for c in self.clips:

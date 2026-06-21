@@ -18,6 +18,8 @@ from PyQt6.QtCore import Qt, QUrl, QTimer, pyqtSignal
 
 from .ClipModel import seconds_to_tc, Clip, TrackType
 
+_UNSET = object()  # sentinel for _tl_clip — distinct from None
+
 # ---------------------------------------------------------------------------
 # Styles
 # ---------------------------------------------------------------------------
@@ -150,7 +152,7 @@ class PreviewWidget(QWidget):
         self._tl_position    = 0.0   # virtual playhead (seconds in project timeline)
         self._tl_duration    = 0.0   # total project duration
         self._tl_playing     = False
-        self._tl_clip        = None  # currently active Clip (or None = gap)
+        self._tl_clip        = _UNSET  # currently active Clip (_UNSET = never evaluated)
         self._tl_clip_offset = 0.0   # seconds into current source file
         self._tl_timer       = QTimer(self)
         self._tl_timer.setInterval(TIMELINE_TICK_MS)
@@ -355,7 +357,7 @@ class PreviewWidget(QWidget):
         else:  # TIMELINE
             self._mode_label.setText("TIMELINE")
             if self._project and self._project.duration > 0:
-                self._tl_duration = self._project.duration
+                self._tl_duration = self._live_duration()
                 self.lbl_duration.setText(seconds_to_tc(self._tl_duration))
                 self._tl_seek(0.0)
             else:
@@ -411,6 +413,11 @@ class PreviewWidget(QWidget):
         self._tl_duration = project.duration if project else 0.0
         if self._mode == self.MODE_TIMELINE:
             self.lbl_duration.setText(seconds_to_tc(self._tl_duration))
+
+    def _live_duration(self) -> float:
+        if self._project:
+            return self._project.duration
+        return self._tl_duration
 
     def timeline_seek(self, seconds: float):
         """
@@ -480,23 +487,28 @@ class PreviewWidget(QWidget):
 
     def _tl_play(self):
         """Start timeline playback."""
-        if not self._project or self._tl_duration <= 0:
+        if not self._project or self._live_duration() <= 0:
             return
-        if self._tl_position >= self._tl_duration:
-            self._tl_seek(0.0)   # wrap around
+        dur = self._live_duration()
+        self._tl_duration = dur
+        if self._tl_position >= dur:
+            self._tl_seek(0.0)
         self._tl_playing = True
         self.btn_play_pause.setText("⏸")
 
-        # Load clip at current position and start player
         clip = self._clip_at(self._tl_position)
         if clip:
             offset = self._tl_position - clip.timeline_position + clip.in_point
             self._load_clip(clip, offset)
             self.player.play()
         else:
-            # In a gap — don't load anything, timer will advance past it
-            self.player.pause()
+            self.player.stop()
+            self._current_source = None
+            self.video_widget.hide()
+            self.no_media_label.setText("◼  Gap")
+            self.no_media_label.show()
 
+        self._tl_clip = _UNSET
         self._tl_last_wall = _wall_ms()
         self._tl_timer.start()
 
@@ -513,9 +525,13 @@ class PreviewWidget(QWidget):
 
     def _tl_seek(self, seconds: float):
         """Jump timeline virtual playhead to `seconds`."""
-        seconds = max(0.0, min(seconds, self._tl_duration))
+        dur = self._live_duration()
+        self._tl_duration = dur
+        seconds = max(0.0, min(seconds, dur))
         self._tl_position = seconds
+        self._tl_clip = _UNSET
 
+        self.lbl_duration.setText(seconds_to_tc(dur))
         self._update_tl_scrubber()
         self.lbl_current.setText(seconds_to_tc(seconds))
         self.position_changed.emit(seconds)
@@ -527,12 +543,8 @@ class PreviewWidget(QWidget):
             if self._tl_playing:
                 self.player.play()
         else:
-            # Gap — show black (stop player, keep video widget visible if it was)
-            if self._current_source:
-                self.player.pause()
-                # Seek the player to black by seeking past end — just pause at 0
-                self.player.setPosition(0)
-            # Show no_media_label with a "gap" message
+            self.player.stop()
+            self._current_source = None
             self.video_widget.hide()
             self.no_media_label.setText("◼  Gap")
             self.no_media_label.show()
@@ -540,59 +552,64 @@ class PreviewWidget(QWidget):
         self._tl_last_wall = _wall_ms()
 
     def _tl_tick(self):
-        """
-        Called every TIMELINE_TICK_MS ms during playback.
-        Advances _tl_position by actual wall-clock elapsed time,
-        handles clip transitions and gaps.
-        """
         if not self._tl_playing:
             return
 
         now     = _wall_ms()
         elapsed = (now - self._tl_last_wall) / 1000.0
         self._tl_last_wall = now
-
         new_pos = self._tl_position + elapsed
 
-        if new_pos >= self._tl_duration:
-            # Reached end of timeline
-            self._tl_seek(self._tl_duration)
+        dur = self._live_duration()
+        self._tl_duration = dur
+
+        if new_pos >= dur:
+            self._tl_seek(dur)
             self._tl_pause()
             return
 
         self._tl_position = new_pos
-
-        # Update scrubber + timecode
         self._update_tl_scrubber()
         self.lbl_current.setText(seconds_to_tc(self._tl_position))
         self.position_changed.emit(self._tl_position)
 
-        # Check if we need to switch clips
         clip_now = self._clip_at(self._tl_position)
-        if clip_now != self._tl_clip:
+        if clip_now is not self._tl_clip:
             if clip_now:
-                # Transition to a new clip
                 offset = (self._tl_position - clip_now.timeline_position) + clip_now.in_point
                 self._load_clip(clip_now, offset)
                 self.player.play()
             else:
-                # Entered a gap
-                self.player.pause()
+                self.player.stop()
+                self._current_source = None
                 self.video_widget.hide()
                 self.no_media_label.setText("◼  Gap")
                 self.no_media_label.show()
                 self._tl_clip = None
 
     def _load_clip(self, clip: Clip, offset_seconds: float):
-        """Load a clip source into the player and seek to offset."""
+        """
+        Load a clip into the player and seek to offset_seconds.
+
+        _current_source is set to None whenever we enter a gap, so even if
+        the next clip shares the same source file we always call setSource —
+        this is the only reliable way to seek after player.stop().
+        Seeking is deferred to _on_media_status_changed (BufferedMedia) because
+        setPosition on LoadedMedia fires too early and gets ignored by Qt.
+        """
+        self._pending_seek_ms  = int(offset_seconds * 1000)
+        self._pending_play     = self._tl_playing   # remember if we should autoplay
+
         if self._current_source != clip.source_path:
             self._current_source = clip.source_path
             self.player.setSource(QUrl.fromLocalFile(clip.source_path))
-            # Seek after source is set — handled by mediaStatusChanged
-            self._pending_seek_ms = int(offset_seconds * 1000)
+            # Seek happens in _on_media_status_changed once BufferedMedia fires
         else:
-            # Same source — just seek
-            self.player.setPosition(int(offset_seconds * 1000))
+            # Same source, player still loaded — seek immediately and play
+            self.player.setPosition(self._pending_seek_ms)
+            self._pending_seek_ms = None
+            if self._tl_playing:
+                self.player.play()
 
         self.video_widget.show()
         self.no_media_label.hide()
@@ -660,11 +677,19 @@ class PreviewWidget(QWidget):
                 self.btn_play_pause.setText("▶")
 
     def _on_media_status_changed(self, status):
-        """After a source change, seek to the pending position."""
-        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+        """After a source change, seek to the pending position once buffered.
+
+        BufferedMedia is used instead of LoadedMedia — LoadedMedia fires before
+        Qt is ready to honour setPosition, causing playback to start from 0.
+        BufferedMedia fires once enough data is buffered to seek reliably.
+        """
+        if status == QMediaPlayer.MediaStatus.BufferedMedia:
             if hasattr(self, "_pending_seek_ms") and self._pending_seek_ms is not None:
                 self.player.setPosition(self._pending_seek_ms)
                 self._pending_seek_ms = None
+                if getattr(self, "_pending_play", False) and self._tl_playing:
+                    self.player.play()
+                    self._pending_play = False
 
     # =========================================================================
     # Scrubber handlers

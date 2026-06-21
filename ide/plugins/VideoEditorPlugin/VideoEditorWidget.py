@@ -290,6 +290,16 @@ class VideoEditorWidget(QWidget):
         save_sc = QShortcut(QKeySequence("Ctrl+S"), self)
         save_sc.activated.connect(self._save_project)
 
+        # S → split at playhead (timeline focused)
+        split_sc = QShortcut(QKeySequence(Qt.Key.Key_S), self)
+        split_sc.activated.connect(self.timeline._split_at_playhead)
+
+        # Delete / Backspace → delete selected clip
+        del_sc = QShortcut(QKeySequence(Qt.Key.Key_Delete), self)
+        del_sc.activated.connect(self.timeline._delete_selected)
+        bsp_sc = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        bsp_sc.activated.connect(self.timeline._delete_selected)
+
     # =========================================================================
     # Media bin → preview
     # =========================================================================

@@ -217,8 +217,9 @@ class MediaBin(QWidget):
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Import Media",
-            os.path.expanduser("~"),
-            f"{ALL_MEDIA};;{SUPPORTED_VIDEO};;{SUPPORTED_AUDIO};;{SUPPORTED_IMAGE};;All Files (*)"
+            os.path.expanduser("~/Videos"),
+            f"{ALL_MEDIA};;{SUPPORTED_VIDEO};;{SUPPORTED_AUDIO};;{SUPPORTED_IMAGE};;All Files (*)",
+            "All Files (*)"
         )
         for path in paths:
             self.add_file(path)
