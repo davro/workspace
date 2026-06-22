@@ -17,6 +17,8 @@ from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtCore import Qt, QUrl, QTimer, pyqtSignal
 
 from .ClipModel import seconds_to_tc, Clip, TrackType
+from .SubtitleOverlay import SubtitleOverlay
+from .SubtitleStyle import SubtitleStyle
 
 _UNSET = object()  # sentinel for _tl_clip — distinct from None
 
@@ -162,6 +164,7 @@ class PreviewWidget(QWidget):
         self._setup_player()
         self._build_ui()
         self._connect_signals()
+        self._subtitle_overlay: SubtitleOverlay | None = None
 
     # =========================================================================
     # Player setup
@@ -220,6 +223,11 @@ class PreviewWidget(QWidget):
         self.video_widget.setStyleSheet("background:#000;")
         self.player.setVideoOutput(self.video_widget)
         root.addWidget(self.video_widget, stretch=1)
+
+        # Subtitle overlay
+        self._subtitle_overlay = SubtitleOverlay(self.video_widget)
+        self._subtitle_overlay.resize(self.video_widget.size())
+        self._subtitle_overlay.show()
 
         # No-media placeholder
         self.no_media_label = QLabel("No media loaded\nImport a clip to begin")
@@ -535,6 +543,8 @@ class PreviewWidget(QWidget):
         self._update_tl_scrubber()
         self.lbl_current.setText(seconds_to_tc(seconds))
         self.position_changed.emit(seconds)
+        if self._subtitle_overlay:
+            self._subtitle_overlay.update_position(seconds)
 
         clip = self._clip_at(seconds)
         if clip:
@@ -572,6 +582,8 @@ class PreviewWidget(QWidget):
         self._update_tl_scrubber()
         self.lbl_current.setText(seconds_to_tc(self._tl_position))
         self.position_changed.emit(self._tl_position)
+        if self._subtitle_overlay:
+            self._subtitle_overlay.update_position(self._tl_position)
 
         clip_now = self._clip_at(self._tl_position)
         if clip_now is not self._tl_clip:
@@ -667,6 +679,8 @@ class PreviewWidget(QWidget):
                 self.scrubber.setValue(val)
                 self.scrubber.blockSignals(False)
             self.position_changed.emit(seconds)
+            if self._subtitle_overlay:
+                self._subtitle_overlay.update_position(seconds)
         # In TIMELINE mode the tick loop manages position — ignore player pos events
 
     def _on_playback_state_changed(self, state):
@@ -731,6 +745,27 @@ class PreviewWidget(QWidget):
     # =========================================================================
     # Cleanup
     # =========================================================================
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._subtitle_overlay and self.video_widget:
+            self._subtitle_overlay.resize(self.video_widget.size())
+
+    def set_subtitle_segments(self, segments: list):
+        if self._subtitle_overlay:
+            self._subtitle_overlay.set_segments(segments)
+
+    def set_subtitle_style(self, style):
+        if self._subtitle_overlay:
+            self._subtitle_overlay.set_style(style)
+
+    def clear_subtitles(self):
+        if self._subtitle_overlay:
+            self._subtitle_overlay.clear_segments()
+
+    def set_subtitles_visible(self, visible: bool):
+        if self._subtitle_overlay:
+            self._subtitle_overlay.set_subtitles_visible(visible)
 
     def cleanup(self):
         self._tl_timer.stop()

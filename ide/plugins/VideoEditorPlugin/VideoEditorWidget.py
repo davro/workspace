@@ -36,6 +36,8 @@ from .FFmpegWorker import check_ffmpeg_available
 from .WhisperWorker import WhisperWorker
 from .WhisperDialog import WhisperDialog
 from .TranscriptPanel import TranscriptPanel
+from .SubtitleStyle import SubtitleStyle
+from .SubtitleStyleDialog import SubtitleStyleDialog
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +145,9 @@ class VideoEditorWidget(QWidget):
 
         # Whisper worker tracking (REQUIRED — GC kills workers without a reference)
         self._whisper_workers: list = []
+        # Subtitle state
+        self._subtitle_style   = SubtitleStyle()
+        self._subtitle_segments: list = []   # last completed transcription
 
         self._build_ui()
         self._connect_signals()
@@ -290,6 +295,7 @@ class VideoEditorWidget(QWidget):
         # Transcript panel → preview seek + close
         self.transcript_panel.seek_requested.connect(self._on_seek)
         self.transcript_panel.close_requested.connect(self._hide_transcript_panel)
+        self.transcript_panel.style_requested.connect(self._open_subtitle_style)
 
         # Media bin → preview + timeline
         self.media_bin.clip_selected.connect(self._on_bin_clip_selected)
@@ -540,11 +546,14 @@ class VideoEditorWidget(QWidget):
 
     def _on_whisper_finished(self, segments: list):
         n = len(segments)
-        self.transcript_panel.set_status(f"{n} segment{'s' if n != 1 else ''} transcribed")
+        self._subtitle_segments = segments   # keep for export
+        # Push to preview overlay
+        self.preview.set_subtitle_segments(segments)
+        self.preview.set_subtitle_style(self._subtitle_style)
+        self.transcript_panel.set_status(f"{n} segment{chr(115) if n != 1 else chr(0)[:0]} transcribed")
         self.plugin.api.show_status_message(
-            f"🎙 Transcription complete — {n} segment{'s' if n != 1 else ''}", 3000
+            f"🎙 Transcription complete — {n} segment{chr(115) if n != 1 else chr(0)[:0]}", 3000
         )
-        # Clean up finished workers
         self._whisper_workers = [w for w in self._whisper_workers if w.isRunning()]
 
     def _on_whisper_error(self, message: str):
@@ -553,6 +562,14 @@ class VideoEditorWidget(QWidget):
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.warning(self, "Transcription Failed", message)
         self._whisper_workers = [w for w in self._whisper_workers if w.isRunning()]
+
+    def _open_subtitle_style(self):
+        """Open subtitle style dialog and apply changes to preview + store for export."""
+        dlg = SubtitleStyleDialog(initial=self._subtitle_style, parent=self)
+        if dlg.exec() == SubtitleStyleDialog.DialogCode.Accepted:
+            self._subtitle_style = dlg.style
+            self.preview.set_subtitle_style(self._subtitle_style)
+            self.plugin.api.show_status_message("🎨 Subtitle style updated", 2000)
 
     def _hide_transcript_panel(self):
         """Collapse the transcript panel back into the splitter."""
@@ -606,7 +623,12 @@ class VideoEditorWidget(QWidget):
             return
 
         from .ExportDialog import ExportDialog
-        dlg = ExportDialog(self.project, self)
+        dlg = ExportDialog(
+            self.project,
+            parent             = self,
+            subtitle_segments  = self._subtitle_segments if self._subtitle_segments else None,
+            subtitle_style     = self._subtitle_style,
+        )
         dlg.exec()
 
     # =========================================================================

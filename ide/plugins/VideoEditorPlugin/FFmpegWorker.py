@@ -639,6 +639,232 @@ class TrimWorker(QThread):
             self.error.emit(str(e))
 
 
+
+# ---------------------------------------------------------------------------
+# SubtitleBurnWorker
+# ---------------------------------------------------------------------------
+
+class SubtitleBurnWorker(QThread):
+    """
+    Burns subtitles onto a video file using FFmpeg drawtext filters.
+
+    One drawtext filter is generated per segment, enabled only during
+    [start, end] using the 'enable' expression — no external font files
+    or SRT parsing needed at runtime.
+
+    Signals
+    -------
+    progress(float)   0.0-1.0
+    finished(str)     output path
+    error(str)        human-readable error
+    log(str)          ffmpeg output line
+    """
+
+    progress = pyqtSignal(float)
+    finished = pyqtSignal(str)
+    error    = pyqtSignal(str)
+    log      = pyqtSignal(str)
+
+    def __init__(self, input_path: str, output_path: str,
+                 segments: list, style,
+                 total_duration: float = 0.0,
+                 parent=None):
+        """
+        Parameters
+        ----------
+        input_path     : source video (already exported or raw clip)
+        output_path    : destination
+        segments       : list[TranscriptSegment]
+        style          : SubtitleStyle instance
+        total_duration : for progress reporting
+        """
+        super().__init__(parent)
+        self.input_path      = input_path
+        self.output_path     = output_path
+        self.segments        = segments
+        self.style           = style
+        self.total_duration  = total_duration
+        self._cancelled      = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            self._burn()
+        except Exception as e:
+            self.error.emit(str(e))
+
+    def _burn(self):
+        if not self.segments:
+            self.error.emit("No subtitle segments to burn in.")
+            return
+
+        import tempfile, os
+
+        s = self.style
+
+        # --- Write a temporary ASS file ---
+        # ASS gives us full style control (font, size, colour, outline, position)
+        # and avoids all the filtergraph escaping hell of drawtext.
+        ass_path = self._write_ass(s)
+        if not ass_path:
+            return
+        try:
+            self._run_burn_with_ass(ass_path)
+        finally:
+            try:
+                os.unlink(ass_path)
+            except OSError:
+                pass
+
+    def _probe_resolution(self) -> tuple:
+        """Return (width, height) of the input video, defaulting to 1920x1080."""
+        try:
+            import json
+            result = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_streams", "-select_streams", "v:0", self.input_path],
+                capture_output=True, text=True, timeout=10
+            )
+            data = json.loads(result.stdout)
+            stream = data["streams"][0]
+            return int(stream["width"]), int(stream["height"])
+        except Exception:
+            return 1920, 1080
+
+    def _write_ass(self, s) -> str:
+        """Write an ASS subtitle file and return its path."""
+        import tempfile
+
+        # ASS alignment codes (numpad layout):
+        # 1=BL 2=BC 3=BR  4=ML 5=MC 6=MR  7=TL 8=TC 9=TR
+        _align_map = {
+            "Bottom Left":    1,
+            "Bottom Centre":  2,
+            "Bottom Right":   3,
+            "Centre":         5,
+            "Top Left":       7,
+            "Top Centre":     8,
+            "Top Right":      9,
+        }
+        alignment = _align_map.get(s.position, 2)
+
+        # Colours in ASS are &HAABBGGRR (alpha, blue, green, red)
+        def _ass_colour(rgba, alpha_override=None):
+            r, g, b, a = rgba
+            aa = alpha_override if alpha_override is not None else (255 - a)
+            return f"&H{aa:02X}{b:02X}{g:02X}{r:02X}"
+
+        primary   = _ass_colour(s.text_color)
+        outline_c = _ass_colour(s.outline_color)
+        back_c    = _ass_colour(s.bg_color) if s.bg_enabled else "&H80000000"
+        bold_val  = -1 if s.font_weight == "Bold" else 0
+        outline_w = s.outline_width
+        shadow    = 0
+        border    = 3 if s.bg_enabled else 1   # 1=outline, 3=opaque box
+
+        margin_v  = s.margin
+        margin_h  = s.margin
+
+        play_w, play_h = self._probe_resolution()
+
+        header = (
+            "[Script Info]\n"
+            "ScriptType: v4.00+\n"
+            "WrapStyle: 0\n"
+            "ScaledBorderAndShadow: yes\n"
+            "YCbCr Matrix: None\n"
+            f"PlayResX: {play_w}\n"
+            f"PlayResY: {play_h}\n\n"
+            "[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+            "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+            "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+            "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+            f"Style: Default,{s.font_family},{s.font_size},"
+            f"{primary},&H000000FF,{outline_c},{back_c},"
+            f"{bold_val},0,0,0,"
+            f"100,100,0,0,{border},{outline_w},{shadow},"
+            f"{alignment},{margin_h},{margin_h},{margin_v},1\n\n"
+            "[Events]\n"
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        )
+
+        def _tc(s_sec):
+            h  = int(s_sec // 3600)
+            m  = int((s_sec % 3600) // 60)
+            sc = s_sec % 60
+            cs = int((sc % 1) * 100)
+            return f"{h}:{m:02d}:{int(sc):02d}.{cs:02d}"
+
+        events = []
+        for seg in self.segments:
+            text = seg.text.strip().replace("\n", " ").replace("\n", "\\N")
+            events.append(
+                f"Dialogue: 0,{_tc(seg.start)},{_tc(seg.end)},Default,,0,0,0,,{text}"
+            )
+
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ass", delete=False, encoding="utf-8")
+        tmp.write(header + "\n".join(events))
+        tmp.close()
+        return tmp.name
+
+    def _run_burn_with_ass(self, ass_path: str):
+        """Run FFmpeg with the ASS subtitle filter."""
+        # Escape the ass path for FFmpeg filter: backslashes and colons
+        safe_ass = ass_path.replace("\\", "/").replace(":", "\:")
+
+        cmd = [
+            FFMPEG, "-y",
+            "-i", self.input_path,
+            "-vf", f"ass={safe_ass}",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "18",
+            "-c:a", "copy",
+            "-movflags", "+faststart",
+            "-progress", "pipe:1",
+            self.output_path,
+        ]
+
+        self.log.emit(f"Burning {len(self.segments)} subtitle segment(s) via ASS filter...")
+        self._run_ffmpeg_burn(cmd)
+
+    def _run_ffmpeg_burn(self, cmd):
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        dur = self.total_duration
+        for line in process.stdout:
+            if self._cancelled:
+                process.terminate()
+                self.error.emit("Subtitle burn cancelled.")
+                return
+            line = line.strip()
+            self.log.emit(line)
+            if line.startswith("out_time_ms=") and dur > 0:
+                try:
+                    t = int(line.split("=")[1]) / 1_000_000
+                    self.progress.emit(min(t / dur, 1.0))
+                except ValueError:
+                    pass
+
+        process.wait()
+        if process.returncode == 0:
+            self.progress.emit(1.0)
+            self.finished.emit(self.output_path)
+        else:
+            self.error.emit(
+                f"FFmpeg subtitle burn failed (code {process.returncode}). "
+                "Check log for details."
+            )
+
 # ---------------------------------------------------------------------------
 # check_ffmpeg_available
 # ---------------------------------------------------------------------------

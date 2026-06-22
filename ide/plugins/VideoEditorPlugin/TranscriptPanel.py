@@ -186,7 +186,8 @@ class TranscriptPanel(QWidget):
     """
 
     seek_requested  = pyqtSignal(float)
-    close_requested = pyqtSignal()      # emitted when user clicks ✕ in title bar
+    close_requested = pyqtSignal()
+    style_requested = pyqtSignal()   # user clicked the Style button      # emitted when user clicks ✕ in title bar
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -241,8 +242,9 @@ class TranscriptPanel(QWidget):
 
         self.btn_copy   = QPushButton("📋 Copy")
         self.btn_export = QPushButton("💾 Export…")
+        self.btn_style  = QPushButton("🎨 Style")
         self.btn_clear  = QPushButton("✕ Clear")
-        for b in (self.btn_copy, self.btn_export, self.btn_clear):
+        for b in (self.btn_copy, self.btn_export, self.btn_style, self.btn_clear):
             b.setObjectName("PanelBtn")
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             b.setEnabled(False)
@@ -250,6 +252,7 @@ class TranscriptPanel(QWidget):
 
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
         self.btn_export.clicked.connect(self._export_dialog)
+        self.btn_style.clicked.connect(self.style_requested)
         self.btn_clear.clicked.connect(self.clear)
         root.addWidget(btn_row)
 
@@ -367,6 +370,7 @@ class TranscriptPanel(QWidget):
         has = bool(self._segments)
         self.btn_copy.setEnabled(has)
         self.btn_export.setEnabled(has)
+        self.btn_style.setEnabled(has)
         self.btn_clear.setEnabled(has)
 
     def _scroll_to_bottom(self):
