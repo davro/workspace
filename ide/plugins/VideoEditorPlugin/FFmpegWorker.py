@@ -814,7 +814,7 @@ class SubtitleBurnWorker(QThread):
     def _run_burn_with_ass(self, ass_path: str):
         """Run FFmpeg with the ASS subtitle filter."""
         # Escape the ass path for FFmpeg filter: backslashes and colons
-        safe_ass = ass_path.replace("\\", "/").replace(":", "\:")
+        safe_ass = ass_path.replace("\\", "/").replace(":", r"\:")
 
         cmd = [
             FFMPEG, "-y",
@@ -844,6 +844,14 @@ class SubtitleBurnWorker(QThread):
         for line in process.stdout:
             if self._cancelled:
                 process.terminate()
+                process.wait()   # ensure process is fully dead before cleanup
+                # Remove the partial output file — FFmpeg will have written
+                # an incomplete/corrupt file that would confuse the user
+                try:
+                    if os.path.exists(self.output_path):
+                        os.unlink(self.output_path)
+                except OSError:
+                    pass
                 self.error.emit("Subtitle burn cancelled.")
                 return
             line = line.strip()

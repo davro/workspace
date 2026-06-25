@@ -6,7 +6,7 @@ Opens when the user clicks 🎙 Transcribe in the VideoEditorWidget toolbar.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -16,6 +16,52 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from .WhisperWorker import MODEL_SIZES
+
+
+# ---------------------------------------------------------------------------
+# Device detection
+# ---------------------------------------------------------------------------
+
+def detect_devices() -> List[Tuple[str, str, str]]:
+    """
+    Return a list of (label, device_str, compute_type) tuples for the
+    device combo box.  CPU is always present.  CUDA devices are added if
+    torch is installed and at least one GPU is available.
+
+    compute_type choices
+    --------------------
+    CPU              -> "int8"         (fastest on CPU, universally supported)
+    CUDA (fp16 cap)  -> "float16"      (full GPU precision, requires >= 3GB VRAM)
+    CUDA (int8 cap)  -> "int8_float16" (lower VRAM, good for 4-6 GB cards)
+    """
+    devices: List[Tuple[str, str, str]] = []
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                props   = torch.cuda.get_device_properties(i)
+                name    = props.name                       # e.g. "NVIDIA GeForce RTX 3080"
+                vram_gb = props.total_memory / (1024 ** 3)
+                major   = props.major                      # CUDA compute capability major
+                # fp16 reliable on compute capability >= 7.0 (Volta+) with >= 3 GB VRAM
+                if major >= 7 and vram_gb >= 3.0:
+                    compute = "float16"
+                else:
+                    compute = "int8_float16"
+                label = f"GPU {i}  -  {name}  ({vram_gb:.1f} GB)"
+                devices.append((label, f"cuda:{i}", compute))
+    except Exception:
+        # torch not installed, or any CUDA probe error - silently skip
+        pass
+
+    # CPU is always the safe fallback
+    devices.append(("CPU  (slower, always available)", "cpu", "int8"))
+    return devices
+
+
+# Cache at import time so the dialog opens instantly
+_DEVICES = detect_devices()
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +147,16 @@ QPushButton#CancelBtn {
 }
 QPushButton#CancelBtn:hover { border-color: #666666; color: #CCCCCC; }
 QFrame#Divider { color: #2A2A2A; }
+QLabel#GpuBadge {
+    color: #4A90D9;
+    font-size: 11px;
+    padding: 2px 0 0 0;
+}
+QLabel#NoGpuHint {
+    color: #666666;
+    font-size: 11px;
+    padding: 2px 0 0 0;
+}
 """
 
 MODEL_HINTS = {
@@ -142,9 +198,12 @@ class WhisperDialog(QDialog):
     Result
     ------
     After exec(), if accepted():
-        dialog.selected_model    → str  e.g. "base"
-        dialog.selected_language → str | None
-        dialog.selected_source   → str  (file path)
+        dialog.selected_model        → str        e.g. "base"
+        dialog.selected_language     → str | None
+        dialog.selected_source       → str        (file path)
+        dialog.selected_vad          → bool
+        dialog.selected_device       → str        e.g. "cuda:0" or "cpu"
+        dialog.selected_compute_type → str        e.g. "float16" or "int8"
     """
 
     def __init__(
@@ -163,11 +222,15 @@ class WhisperDialog(QDialog):
         self.bin_path  = bin_path
         self.bin_name  = bin_name or (bin_path or "")
 
-        # Outputs
-        self.selected_model:    str         = "base"
-        self.selected_language: Optional[str] = None
-        self.selected_source:   str         = bin_path or ""
-        self.selected_vad:      bool        = False
+        # Outputs — defaults match WhisperWorker defaults
+        self.selected_model:        str          = "base"
+        self.selected_language:     Optional[str] = None
+        self.selected_source:       str          = bin_path or ""
+        self.selected_vad:          bool         = False
+        # Device defaults: prefer first GPU if available, else CPU
+        _default         = _DEVICES[0]
+        self.selected_device:       str          = _default[1]
+        self.selected_compute_type: str          = _default[2]
 
         self._build_ui()
         self._update_hints()
@@ -254,6 +317,33 @@ class WhisperDialog(QDialog):
         vad_hint.setObjectName("HintLabel")
         root.addWidget(vad_hint)
 
+        root.addWidget(self._divider())
+
+        # --- Device selection ---
+        dev_label = QLabel("DEVICE")
+        dev_label.setObjectName("SectionLabel")
+        root.addWidget(dev_label)
+
+        self.combo_device = QComboBox()
+        for label, device_str, compute in _DEVICES:
+            self.combo_device.addItem(label, userData=(device_str, compute))
+        # Default to first entry (GPU if detected, otherwise CPU)
+        self.combo_device.setCurrentIndex(0)
+        root.addWidget(self.combo_device)
+
+        # Status hint — shows GPU name + compute type, or a nudge to install torch
+        if len(_DEVICES) > 1:
+            # At least one GPU was detected
+            gpu_count = len(_DEVICES) - 1  # exclude the CPU entry
+            plural    = "s" if gpu_count > 1 else ""
+            dev_hint  = QLabel(f"✓ {gpu_count} CUDA GPU{plural} detected — significantly faster than CPU")
+            dev_hint.setObjectName("GpuBadge")
+        else:
+            dev_hint = QLabel("No CUDA GPU detected  •  install PyTorch with CUDA for GPU speed-up")
+            dev_hint.setObjectName("NoGpuHint")
+        dev_hint.setWordWrap(True)
+        root.addWidget(dev_hint)
+
         root.addStretch()
 
         # --- Buttons ---
@@ -290,8 +380,11 @@ class WhisperDialog(QDialog):
         self.hint_label.setText(MODEL_HINTS.get(model, ""))
 
     def _on_start(self):
-        self.selected_model    = self.combo_model.currentText()
-        self.selected_language = self.combo_lang.currentData()
-        self.selected_source   = self.bin_path or ""
-        self.selected_vad      = self.chk_vad.isChecked()
+        self.selected_model        = self.combo_model.currentText()
+        self.selected_language     = self.combo_lang.currentData()
+        self.selected_source       = self.bin_path or ""
+        self.selected_vad          = self.chk_vad.isChecked()
+        device_str, compute        = self.combo_device.currentData()
+        self.selected_device       = device_str
+        self.selected_compute_type = compute
         self.accept()

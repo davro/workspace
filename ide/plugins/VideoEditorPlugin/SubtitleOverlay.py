@@ -28,19 +28,41 @@ from .WhisperWorker import TranscriptSegment
 
 class SubtitleOverlay(QWidget):
     """
-    Transparent overlay widget.  Parent it to the QVideoWidget so it
-    tracks the video area automatically.
+    Frameless transparent tool window that floats over the video area.
 
-    Call update_position(seconds) on every position_changed signal
-    to update which subtitle is shown.
+    It is created as a top-level tool window (Qt.Tool | FramelessWindowHint |
+    WindowTransparentForInput) rather than a child widget.  This is the only
+    reliable way to paint over Qt6's FFmpeg multimedia backend, which renders
+    video via a native OpenGL surface that sits above all child widgets in the
+    X11 compositor regardless of z-order tricks.
+
+    PreviewWidget owns the overlay, calls reposition(rect) whenever the video
+    area moves or resizes, and show()/hide() to match video visibility.
     """
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        # Tool window: frameless, transparent input, stays above parent
+        super().__init__(
+            parent,
+            Qt.WindowType.Tool |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowTransparentForInput |
+            Qt.WindowType.WindowDoesNotAcceptFocus |
+            Qt.WindowType.NoDropShadowWindowHint,
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setStyleSheet("background: transparent;")
+
+        self._segments: List[TranscriptSegment] = []
+        self._current_text: Optional[str] = None
+        self._style = SubtitleStyle()
+        self._visible_sub = True
+
+    def reposition(self, global_rect):
+        """Move and resize the overlay to cover the given global screen rect."""
+        self.setGeometry(global_rect)
 
         self._segments: List[TranscriptSegment] = []
         self._current_text: Optional[str] = None
@@ -84,16 +106,20 @@ class SubtitleOverlay(QWidget):
     # -------------------------------------------------------------------------
 
     def paintEvent(self, event):
+        # Always clear to fully transparent first — without this, residue from
+        # the previous subtitle frame remains when _current_text changes.
+        p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        p.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+
         if not self._visible_sub or not self._current_text:
+            p.end()
             return
 
         s = self._style
         text = self._current_text
         w, h = self.width(), self.height()
-
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
         font = QFont(s.font_family, s.font_size)
         font.setBold(s.font_weight == "Bold")

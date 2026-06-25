@@ -1,8 +1,8 @@
 """
 SubtitleStyle — shared dataclass describing subtitle appearance.
 
-Used by SubtitleStyleDialog, SubtitleOverlay (live preview), and
-SubtitleBurnWorker (FFmpeg drawtext export).
+Used by SubtitleStyleDialog (editor UI), PreviewWidget (live QGraphicsScene
+rendering), and SubtitleBurnWorker (FFmpeg ASS export).
 """
 
 from __future__ import annotations

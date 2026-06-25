@@ -10,14 +10,15 @@ TIMELINE mode: plays the assembled timeline sequence, switching clips
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QSlider, QLabel, QSizePolicy
+    QSlider, QLabel, QSizePolicy, QGraphicsView, QGraphicsScene,
+    QGraphicsTextItem, QGraphicsRectItem,
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtMultimediaWidgets import QVideoWidget
-from PyQt6.QtCore import Qt, QUrl, QTimer, pyqtSignal
+from PyQt6.QtMultimediaWidgets import QGraphicsVideoItem
+from PyQt6.QtCore import Qt, QUrl, QTimer, pyqtSignal, QRectF, QSizeF
+from PyQt6.QtGui import QColor, QFont, QPen, QBrush, QResizeEvent
 
 from .ClipModel import seconds_to_tc, Clip, TrackType
-from .SubtitleOverlay import SubtitleOverlay
 from .SubtitleStyle import SubtitleStyle
 
 _UNSET = object()  # sentinel for _tl_clip — distinct from None
@@ -29,9 +30,6 @@ _UNSET = object()  # sentinel for _tl_clip — distinct from None
 PREVIEW_STYLE = """
 QWidget#PreviewContainer {
     background: #111111;
-}
-QVideoWidget {
-    background: #000000;
 }
 QWidget#ModeBar {
     background: #161616;
@@ -164,7 +162,6 @@ class PreviewWidget(QWidget):
         self._setup_player()
         self._build_ui()
         self._connect_signals()
-        self._subtitle_overlay: SubtitleOverlay | None = None
 
     # =========================================================================
     # Player setup
@@ -216,26 +213,57 @@ class PreviewWidget(QWidget):
         root.addWidget(mode_bar)
 
         # ---- Video area ----
-        self.video_widget = QVideoWidget()
-        self.video_widget.setMinimumHeight(160)
-        self.video_widget.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.video_widget.setStyleSheet("background:#000;")
-        self.player.setVideoOutput(self.video_widget)
-        root.addWidget(self.video_widget, stretch=1)
+        # QGraphicsView + QGraphicsVideoItem keeps everything in Qt's software
+        # compositor — no native OpenGL surface, so QGraphicsTextItem subtitles
+        # render reliably on top of video on all backends and platforms.
+        self._scene = QGraphicsScene(self)
+        self._scene.setBackgroundBrush(QBrush(QColor("#000000")))
 
-        # Subtitle overlay
-        self._subtitle_overlay = SubtitleOverlay(self.video_widget)
-        self._subtitle_overlay.resize(self.video_widget.size())
-        self._subtitle_overlay.show()
+        self.video_item = QGraphicsVideoItem()
+        self.video_item.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
+        self._scene.addItem(self.video_item)
+        self.player.setVideoOutput(self.video_item)
 
-        # No-media placeholder
+        # Subtitle background box (hidden when no subtitle)
+        self._sub_bg = QGraphicsRectItem()
+        self._sub_bg.setBrush(QBrush(QColor(0, 0, 0, 140)))
+        self._sub_bg.setPen(QPen(Qt.PenStyle.NoPen))
+        self._sub_bg.setZValue(1)
+        self._sub_bg.hide()
+        self._scene.addItem(self._sub_bg)
+
+        # Subtitle text item — sits above video_item in z-order
+        self._sub_text = QGraphicsTextItem()
+        self._sub_text.setDefaultTextColor(QColor("#FFFFFF"))
+        self._sub_text.setZValue(2)
+        self._sub_text.hide()
+        self._scene.addItem(self._sub_text)
+
+        self._view = QGraphicsView(self._scene)
+        self._view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._view.setFrameShape(QGraphicsView.Shape.NoFrame)
+        self._view.setStyleSheet("background: #000000;")
+        self._view.setMinimumHeight(160)
+        self._view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._view.setRenderHint(self._view.renderHints())
+
+        # No-media placeholder label — swapped with _view when nothing is loaded
         self.no_media_label = QLabel("No media loaded\nImport a clip to begin")
         self.no_media_label.setObjectName("NoMediaLabel")
         self.no_media_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        root.addWidget(self._view, stretch=1)
         root.addWidget(self.no_media_label, stretch=1)
-        self.video_widget.hide()
+
+        # Start with placeholder visible
+        self._view.hide()
         self.no_media_label.show()
+
+        # Subtitle state
+        self._subtitle_segments = []
+        self._subtitle_style    = SubtitleStyle()
+        self._subs_visible      = True
 
         # ---- Scrubber ----
         scrub_bar = QWidget()
@@ -355,11 +383,9 @@ class PreviewWidget(QWidget):
             # Clear timeline state, restore source if any
             if self._current_source:
                 self.player.setSource(QUrl.fromLocalFile(self._current_source))
-                self.video_widget.show()
-                self.no_media_label.hide()
+                self._show_video(True)
             else:
-                self.no_media_label.show()
-                self.video_widget.hide()
+                self._show_video(False)
             self.scrubber.setValue(0)
 
         else:  # TIMELINE
@@ -372,8 +398,7 @@ class PreviewWidget(QWidget):
                 self.no_media_label.setText(
                     "No clips on timeline\nAdd clips to use Timeline mode"
                 )
-                self.no_media_label.show()
-                self.video_widget.hide()
+                self._show_video(False)
                 self.lbl_duration.setText("00:00:00.00")
 
     def _update_mode_buttons(self):
@@ -394,8 +419,7 @@ class PreviewWidget(QWidget):
         self._current_source = path
         if self._mode == self.MODE_SOURCE:
             self.player.setSource(QUrl.fromLocalFile(path))
-            self.video_widget.show()
-            self.no_media_label.hide()
+            self._show_video(True)
 
     def clear(self):
         self._tl_stop()
@@ -407,9 +431,8 @@ class PreviewWidget(QWidget):
         self.lbl_current.setText("00:00:00.00")
         self.lbl_duration.setText("00:00:00.00")
         self.btn_play_pause.setText("▶")
-        self.video_widget.hide()
         self.no_media_label.setText("No media loaded\nImport a clip to begin")
-        self.no_media_label.show()
+        self._show_video(False)
 
     # =========================================================================
     # Public API — Timeline mode
@@ -512,9 +535,8 @@ class PreviewWidget(QWidget):
         else:
             self.player.stop()
             self._current_source = None
-            self.video_widget.hide()
             self.no_media_label.setText("◼  Gap")
-            self.no_media_label.show()
+            self._show_video(False)
 
         self._tl_clip = _UNSET
         self._tl_last_wall = _wall_ms()
@@ -543,8 +565,7 @@ class PreviewWidget(QWidget):
         self._update_tl_scrubber()
         self.lbl_current.setText(seconds_to_tc(seconds))
         self.position_changed.emit(seconds)
-        if self._subtitle_overlay:
-            self._subtitle_overlay.update_position(seconds)
+        self._update_subtitle(seconds)
 
         clip = self._clip_at(seconds)
         if clip:
@@ -555,9 +576,8 @@ class PreviewWidget(QWidget):
         else:
             self.player.stop()
             self._current_source = None
-            self.video_widget.hide()
             self.no_media_label.setText("◼  Gap")
-            self.no_media_label.show()
+            self._show_video(False)
 
         self._tl_last_wall = _wall_ms()
 
@@ -582,8 +602,7 @@ class PreviewWidget(QWidget):
         self._update_tl_scrubber()
         self.lbl_current.setText(seconds_to_tc(self._tl_position))
         self.position_changed.emit(self._tl_position)
-        if self._subtitle_overlay:
-            self._subtitle_overlay.update_position(self._tl_position)
+        self._update_subtitle(self._tl_position)
 
         clip_now = self._clip_at(self._tl_position)
         if clip_now is not self._tl_clip:
@@ -594,9 +613,8 @@ class PreviewWidget(QWidget):
             else:
                 self.player.stop()
                 self._current_source = None
-                self.video_widget.hide()
                 self.no_media_label.setText("◼  Gap")
-                self.no_media_label.show()
+                self._show_video(False)
                 self._tl_clip = None
 
     def _load_clip(self, clip: Clip, offset_seconds: float):
@@ -623,9 +641,20 @@ class PreviewWidget(QWidget):
             if self._tl_playing:
                 self.player.play()
 
-        self.video_widget.show()
-        self.no_media_label.hide()
+        self._show_video(True)
         self._tl_clip = clip
+
+    def _show_video(self, visible: bool):
+        """Swap between the graphics view and the no-media placeholder."""
+        if visible:
+            self.no_media_label.hide()
+            self._view.show()
+            self._layout_scene()
+        else:
+            self._view.hide()
+            self._sub_text.hide()
+            self._sub_bg.hide()
+            self.no_media_label.show()
 
     def _clip_at(self, seconds: float):
         """
@@ -679,8 +708,7 @@ class PreviewWidget(QWidget):
                 self.scrubber.setValue(val)
                 self.scrubber.blockSignals(False)
             self.position_changed.emit(seconds)
-            if self._subtitle_overlay:
-                self._subtitle_overlay.update_position(seconds)
+            self._update_subtitle(seconds)
         # In TIMELINE mode the tick loop manages position — ignore player pos events
 
     def _on_playback_state_changed(self, state):
@@ -743,29 +771,111 @@ class PreviewWidget(QWidget):
                 self.position_changed.emit(seconds)
 
     # =========================================================================
-    # Cleanup
+    # =========================================================================
+    # Scene layout + subtitle rendering
     # =========================================================================
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
-        if self._subtitle_overlay and self.video_widget:
-            self._subtitle_overlay.resize(self.video_widget.size())
+        self._layout_scene()
+
+    def _layout_scene(self):
+        """Keep video_item sized to fill the QGraphicsView."""
+        if not hasattr(self, '_view'):
+            return
+        vr = self._view.rect()
+        self._scene.setSceneRect(0, 0, vr.width(), vr.height())
+        self.video_item.setSize(QSizeF(vr.width(), vr.height()))
+        if self._sub_text.isVisible():
+            self._position_sub_items()
+
+    def _update_subtitle(self, seconds: float):
+        """Find the active segment at `seconds` and update the scene text item."""
+        if not self._subs_visible or not self._subtitle_segments:
+            self._sub_text.hide()
+            self._sub_bg.hide()
+            return
+        text = None
+        for seg in self._subtitle_segments:
+            if seg.start <= seconds < seg.end:
+                text = seg.text.strip()
+                break
+        if not text:
+            self._sub_text.hide()
+            self._sub_bg.hide()
+            return
+        self._sub_text.setPlainText(text)
+        self._apply_subtitle_style()
+        self._position_sub_items()
+        self._sub_text.show()
+
+    def _apply_subtitle_style(self):
+        s = self._subtitle_style
+        font = QFont(s.font_family, s.font_size)
+        font.setBold(s.font_weight == "Bold")
+        self._sub_text.setFont(font)
+        r, g, b, a = s.text_color
+        self._sub_text.setDefaultTextColor(QColor(r, g, b, a))
+        self._sub_text.setTextWidth(self._scene.width() * 0.85)
+        if s.bg_enabled:
+            r, g, b, a = s.bg_color
+            self._sub_bg.setBrush(QBrush(QColor(r, g, b, a)))
+        else:
+            self._sub_bg.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+
+    def _position_sub_items(self):
+        s   = self._subtitle_style
+        sw  = self._scene.width()
+        sh  = self._scene.height()
+        br  = self._sub_text.boundingRect()
+        tw  = br.width()
+        th  = br.height()
+        m   = s.margin
+        pos = s.position
+        if "Right" in pos:
+            tx = sw - tw - m
+        elif "Left" in pos:
+            tx = float(m)
+        else:
+            tx = (sw - tw) / 2
+        if "Top" in pos:
+            ty = float(m)
+        elif pos == "Centre":
+            ty = (sh - th) / 2
+        else:
+            ty = sh - th - m
+        self._sub_text.setPos(tx, ty)
+        pad = 8
+        self._sub_bg.setRect(QRectF(tx - pad, ty - pad, tw + pad * 2, th + pad * 2))
+        if s.bg_enabled:
+            self._sub_bg.show()
+        else:
+            self._sub_bg.hide()
+
+    # =========================================================================
+    # Public subtitle API
+    # =========================================================================
 
     def set_subtitle_segments(self, segments: list):
-        if self._subtitle_overlay:
-            self._subtitle_overlay.set_segments(segments)
+        self._subtitle_segments = segments
 
-    def set_subtitle_style(self, style):
-        if self._subtitle_overlay:
-            self._subtitle_overlay.set_style(style)
+    def set_subtitle_style(self, style: SubtitleStyle):
+        self._subtitle_style = style
 
     def clear_subtitles(self):
-        if self._subtitle_overlay:
-            self._subtitle_overlay.clear_segments()
+        self._subtitle_segments = []
+        self._sub_text.hide()
+        self._sub_bg.hide()
 
     def set_subtitles_visible(self, visible: bool):
-        if self._subtitle_overlay:
-            self._subtitle_overlay.set_subtitles_visible(visible)
+        self._subs_visible = visible
+        if not visible:
+            self._sub_text.hide()
+            self._sub_bg.hide()
+
+    # =========================================================================
+    # Cleanup
+    # =========================================================================
 
     def cleanup(self):
         self._tl_timer.stop()
