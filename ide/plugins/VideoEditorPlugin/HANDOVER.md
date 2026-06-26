@@ -2,21 +2,23 @@
 
 **Last updated:** 2025  
 **Plugin path:** `ide/plugins/VideoEditorPlugin/`  
-**Status:** Whisper transcription + subtitle burn-in implemented and smoke-tested. Ready for broader testing and iteration.
+**Status:** Whisper transcription, live subtitle preview, subtitle burn-in, project
+persistence, CUDA device selection — all implemented and tested.
 
 ---
 
 ## Plugin Overview
 
-A non-linear video editor embedded in the Workspace IDE as a plugin. Built entirely with PyQt6 and FFmpeg. No external video editing libraries.
+A non-linear video editor embedded in the Workspace IDE as a plugin. Built entirely
+with PyQt6 and FFmpeg. No external video editing libraries.
 
 ### Entry point
 
 ```
-VideoEditorPlugin.py   ← plugin loader, calls get_widget()
+VideoEditorPlugin.py      ← plugin loader, calls get_widget()
 VideoEditorPlugin/
     __init__.py
-    VideoEditorWidget.py   ← top-level QWidget, owns all panels
+    VideoEditorWidget.py  ← top-level QWidget, owns all panels
     ...
 ```
 
@@ -26,13 +28,18 @@ VideoEditorPlugin/
 
 ```
 VideoEditorWidget
-├── Toolbar (New / Open / Save / Import / URL Import / 🎙 Transcribe / ▶ Export)
-├── QSplitter (horizontal)
+├── Toolbar  New / Open / Save / Import / URL Import / 🎙 Transcribe / 💬 Subtitles / ▶ Export
+├── QSplitter (horizontal)  [_upper_splitter]
 │   ├── MediaBin          — left panel, imported clips + thumbnails
 │   ├── PreviewWidget     — video playback (SOURCE + TIMELINE modes)
-│   │   └── SubtitleOverlay  — transparent overlay, renders live subtitles
+│   │   ├── QGraphicsView (_view)
+│   │   │   ├── QGraphicsVideoItem  (video, z=0)
+│   │   │   ├── QGraphicsRectItem   (_sub_bg, z=1, subtitle background box)
+│   │   │   └── QGraphicsTextItem   (_sub_text, z=2, subtitle text)
+│   │   └── QLabel no_media_label   (shown when no clip loaded)
 │   └── TranscriptPanel   — right panel (hidden until first transcription)
 │       buttons: 📋 Copy | 💾 Export… | 🎨 Style | ✕ Clear | [title ✕]
+│       search:  🔍 Search transcript… [count label]
 └── TimelineWidget        — bottom, track editor
 ```
 
@@ -42,11 +49,40 @@ VideoEditorWidget
 |---|---|---|
 | `_whisper_workers` | `list[WhisperWorker]` | Keeps workers alive against GC |
 | `_subtitle_segments` | `list[TranscriptSegment]` | Last completed transcription; passed to ExportDialog |
-| `_subtitle_style` | `SubtitleStyle` | Current style; shared between overlay + burn |
+| `_subtitle_style` | `SubtitleStyle` | Current style; shared between preview scene + burn |
+| `_subs_visible` | `bool` | Subtitle toggle state; synced with `btn_subs.isChecked()` |
+| `_project_path` | `str \| None` | Current `.vep` file path; sidecar path derived from this |
 
 ---
 
-## Files Added This Session
+## Video Rendering — Important Architecture Note
+
+**`QVideoWidget` is NOT used.** Early versions tried overlaying a subtitle widget on
+top of `QVideoWidget` but Qt6's FFmpeg multimedia backend renders video via a native
+OpenGL surface that sits above all Qt child widgets in the X11 compositor, regardless
+of z-order tricks (`raise_()`, `QStackedLayout`, tool windows — all fail).
+
+**Solution:** `PreviewWidget` uses `QGraphicsVideoItem` inside a `QGraphicsScene`.
+Everything is in Qt's software compositor, so `QGraphicsTextItem` subtitles render
+reliably above the video on all backends and platforms.
+
+```python
+# In PreviewWidget._build_ui():
+self._scene = QGraphicsScene(self)
+self.video_item = QGraphicsVideoItem()           # z=0
+self._sub_bg    = QGraphicsRectItem()            # z=1
+self._sub_text  = QGraphicsTextItem()            # z=2
+self._scene.addItem(self.video_item)
+self._scene.addItem(self._sub_bg)
+self._scene.addItem(self._sub_text)
+self.player.setVideoOutput(self.video_item)      # not a QVideoWidget
+```
+
+Do not reintroduce `QVideoWidget` — the z-order problem is fundamental to the backend.
+
+---
+
+## Files — Current State
 
 ### `WhisperWorker.py`
 QThread wrapper around `faster-whisper`.
@@ -60,13 +96,22 @@ QThread wrapper around `faster-whisper`.
 | `finished` | `(list[TranscriptSegment])` | All segments done |
 | `error` | `(str)` | Any failure |
 
-**Key params:**
-- `model_size` — `tiny / base / small / medium / large-v3`
-- `language` — ISO code or `None` for auto-detect
-- `vad_filter` — set as attribute after construction; defaults `False` (VAD kills all segments on music/short clips)
-- `source_duration` — float, used for progress reporting only
+**Constructor params:**
 
-**Audio extraction:** For video files, runs `ffmpeg -ar 16000 -ac 1 -f wav` to a temp file before passing to Whisper. Temp file deleted in `finally`.
+| Param | Default | Notes |
+|---|---|---|
+| `source_path` | required | Video or audio file |
+| `model_size` | `"base"` | `tiny/base/small/medium/large-v3` |
+| `language` | `None` | ISO code or `None` for auto-detect |
+| `device` | `"cpu"` | `"cpu"` or `"cuda:0"` etc — set from `WhisperDialog` |
+| `compute_type` | `"int8"` | `"int8"` / `"float16"` / `"int8_float16"` — set from `WhisperDialog` |
+| `source_duration` | `0.0` | For progress reporting only |
+
+**`vad_filter` attribute:** Set as `worker.vad_filter = bool` after construction.
+Defaults `False`. VAD kills all segments on music/short clips — leave off by default.
+
+**Audio extraction:** For video files, runs `ffmpeg -ar 16000 -ac 1 -f wav` to a
+temp file before passing to Whisper. Temp file deleted in `finally`.
 
 **`TranscriptSegment` dataclass:**
 ```python
@@ -75,32 +120,44 @@ class TranscriptSegment:
     start: float
     end:   float
     text:  str
-    words: list           # word-level timestamps (currently unused)
+    words: list           # word-level timestamps (populated but not yet used in UI)
 
     def to_srt_block(self, index: int) -> str
     def to_vtt_block(self) -> str
 ```
 
-**Important:** Always `_whisper_workers.append(worker)` in the caller — Python GC kills QThreads without a live reference.
+**Important:** Always `_whisper_workers.append(worker)` in the caller — Python GC
+kills QThreads without a live reference.
 
 ---
 
 ### `WhisperDialog.py`
-Modal dialog for transcription settings.
+Modal dialog for transcription settings, including CUDA device auto-detection.
 
 **Class:** `WhisperDialog(QDialog)`
 
-**Constructor params:**
-- `bin_path: str | None` — currently selected clip path
-- `bin_name: str | None` — display name
+**Device detection — `detect_devices()` function:**
+
+Called at import time, cached in `_DEVICES`. Probes `torch.cuda` for available GPUs.
+Returns `list[(label, device_str, compute_type)]`. CPU is always the last entry.
+
+Compute type is chosen automatically per GPU compute capability:
+- `major >= 7` and `>= 3 GB VRAM` → `"float16"` (Volta, Turing, Ampere, Ada)
+- Otherwise → `"int8_float16"` (Pascal GTX 10xx and older, low-VRAM cards)
+- CPU → `"int8"`
 
 **Output attributes** (read after `exec() == Accepted`):
-- `selected_model: str` — e.g. `"base"`
-- `selected_language: str | None` — ISO code or `None`
-- `selected_source: str` — file path to transcribe
-- `selected_vad: bool` — whether VAD filter is enabled
 
-**VAD checkbox:** Unchecked by default with warning label. Only enable for long speech recordings with extended silences.
+| Attribute | Type | Notes |
+|---|---|---|
+| `selected_model` | `str` | e.g. `"base"` |
+| `selected_language` | `str \| None` | ISO code or `None` |
+| `selected_source` | `str` | File path |
+| `selected_vad` | `bool` | VAD filter state |
+| `selected_device` | `str` | e.g. `"cuda:0"` or `"cpu"` |
+| `selected_compute_type` | `str` | e.g. `"float16"` or `"int8"` |
+
+All six attributes are passed through to `WhisperWorker` in `VideoEditorWidget._transcribe()`.
 
 ---
 
@@ -111,22 +168,30 @@ Scrollable dockable panel, hidden until first transcription.
 
 | Signal | Args | Fired when |
 |---|---|---|
-| `seek_requested` | `(float)` | User clicks a timestamp |
+| `seek_requested` | `(float)` | User clicks a timestamp or presses Enter in search |
 | `close_requested` | `()` | User clicks ✕ in title bar |
 | `style_requested` | `()` | User clicks 🎨 Style |
 
 **Public API:**
 ```python
 add_segment(start, end, text)     # connect to WhisperWorker.segment_ready
-set_segments(list)                # replace all at once
+set_segments(list)                # replace all at once (used by sidecar load)
 set_progress(float)               # 0.0–1.0, hides bar at 1.0
 set_status(str)
 clear(keep_status=False)
 ```
 
+**Search feature:** `QLineEdit` above the segment list. `textChanged` filters
+`SegmentRow` visibility and highlights the matching substring in each visible row
+using Qt rich text (`<span style="background:...">` inline). `returnPressed` emits
+`seek_requested` with the first visible match's start time.
+
 **Export formats:** `.srt`, `.vtt`, `.txt` via `QFileDialog`.
 
-**Splitter reveal pattern** (Qt6 quirk): The panel starts hidden with 0px in the splitter. To reveal it, call `.show()` then defer `setSizes()` via `QTimer.singleShot(0, ...)` — Qt6 ignores `setSizes` on hidden widgets within the same event loop tick.
+**Splitter reveal pattern** (Qt6 quirk): The panel starts hidden with 0px in the
+splitter. To reveal it, call `.show()` then defer `setSizes()` via
+`QTimer.singleShot(0, ...)` — Qt6 ignores `setSizes` on hidden widgets within the
+same event loop tick.
 
 ```python
 self.transcript_panel.show()
@@ -141,7 +206,8 @@ QTimer.singleShot(0, _resize)
 ---
 
 ### `SubtitleStyle.py`
-Shared dataclass — single source of truth for subtitle appearance used by both live overlay and FFmpeg export.
+Shared dataclass — single source of truth for subtitle appearance used by both the
+live preview scene (`PreviewWidget`) and FFmpeg export (`SubtitleBurnWorker`).
 
 ```python
 @dataclass
@@ -158,9 +224,12 @@ class SubtitleStyle:
     margin:       int   = 40
 ```
 
-**Position presets** (9 options): `Bottom Centre / Bottom Left / Bottom Right / Top Centre / Top Left / Top Right / Centre`
+**Position presets** (7 options): `Bottom Centre / Bottom Left / Bottom Right /
+Top Centre / Top Left / Top Right / Centre`
 
-**FFmpeg helpers:** `ffmpeg_fontcolor()`, `ffmpeg_bordercolor()`, `ffmpeg_boxcolor()` return `0xRRGGBBAA` strings. `ffmpeg_x()`, `ffmpeg_y()` return drawtext expression strings for the position preset.
+**FFmpeg helpers:** `ffmpeg_fontcolor()`, `ffmpeg_bordercolor()`, `ffmpeg_boxcolor()`
+return `0xRRGGBBAA` strings (unused now that burn uses ASS — kept for reference).
+`ffmpeg_x()`, `ffmpeg_y()` return drawtext expression strings (also unused).
 
 ---
 
@@ -173,41 +242,56 @@ Visual style editor with a live mini-preview swatch (`_PreviewLabel` subclass).
 
 **Output:** `dialog.style` → `SubtitleStyle` (read after `exec() == Accepted`)
 
-Controls: font family (QFontComboBox), size (18–72), bold/normal, text/outline/background colour pickers (QColorDialog with alpha support), outline width (0–8px), background box toggle, position preset dropdown.
-
 Works on a copy of the initial style — Cancel discards all changes.
 
 ---
 
-### `SubtitleOverlay.py`
-Transparent `QWidget` parented to `PreviewWidget.video_widget`. Renders the active subtitle using `QPainterPath` for proper outline strokes with word-wrap at 85% of widget width.
+### `PreviewWidget.py`
+Video preview panel. SOURCE mode plays a single bin clip; TIMELINE mode plays the
+assembled sequence.
 
-**Class:** `SubtitleOverlay(QWidget)`
+**Subtitle scene items** (all live in `self._scene`):
 
-**Public API:**
+| Item | Z-value | Purpose |
+|---|---|---|
+| `self.video_item` | 0 | `QGraphicsVideoItem` — video output |
+| `self._sub_bg` | 1 | `QGraphicsRectItem` — optional background box |
+| `self._sub_text` | 2 | `QGraphicsTextItem` — subtitle text |
+
+**Internal subtitle methods:**
+
+| Method | Purpose |
+|---|---|
+| `_update_subtitle(seconds)` | Called on every position tick; finds active segment and updates `_sub_text` |
+| `_apply_subtitle_style()` | Applies `SubtitleStyle` to font, colour, text width |
+| `_position_sub_items()` | Positions text and background box per `SubtitleStyle.position` |
+| `_layout_scene()` | Called from `resizeEvent`; resizes scene rect and `video_item` to fill view |
+
+**Public subtitle API (called from VideoEditorWidget):**
 ```python
-set_style(style: SubtitleStyle)
-set_segments(segments: list[TranscriptSegment])
-clear_segments()
+set_subtitle_segments(segments: list)
+set_subtitle_style(style: SubtitleStyle)
+clear_subtitles()
 set_subtitles_visible(visible: bool)
-update_position(seconds: float)   # call on every position_changed tick
 ```
 
-**Instantiation** (in `PreviewWidget._build_ui`):
-```python
-self._subtitle_overlay = SubtitleOverlay(self.video_widget)
-self._subtitle_overlay.resize(self.video_widget.size())
-self._subtitle_overlay.show()
-```
+**`_show_video(visible: bool)`** — swaps `_view` and `no_media_label` visibility.
+`no_media_label` is a root layout sibling of `_view`, NOT inside it — this ensures
+`_view` is exactly the video area size with no padding from a hidden label.
 
-Resized in `PreviewWidget.resizeEvent` to always cover `video_widget`.
+**Position update call sites** — `_update_subtitle(seconds)` is called in three places:
+- `_on_player_position_changed` (SOURCE mode)
+- `_tl_tick` (TIMELINE mode playback tick)
+- `_tl_seek` (TIMELINE mode seek)
+
+**`player` and `audio_output`** are public attributes — `VideoEditorWidget` accesses
+`self.preview.player` for error signal connection and `self.preview.audio_output` for
+volume preservation on audio reconnect.
 
 ---
 
-## Files Modified This Session
-
 ### `FFmpegWorker.py`
-**Added:** `SubtitleBurnWorker(QThread)`
+**`SubtitleBurnWorker(QThread)`** — burns subtitles into an exported video.
 
 | Signal | Args |
 |---|---|
@@ -216,184 +300,207 @@ Resized in `PreviewWidget.resizeEvent` to always cover `video_widget`.
 | `error` | `(str)` |
 | `log` | `(str)` ffmpeg output line |
 
-**Constructor:**
-```python
-SubtitleBurnWorker(
-    input_path:     str,
-    output_path:    str,
-    segments:       list[TranscriptSegment],
-    style:          SubtitleStyle,
-    total_duration: float = 0.0,
-    parent=None,
-)
-```
+**Burn approach — ASS filter:**
 
-**Burn approach — ASS filter (not drawtext):**
-
-`drawtext` with per-segment `enable='between(t,...)'` expressions was abandoned — FFmpeg's filtergraph parser mangles the escaping when passed via subprocess with 10+ chained filters.
+`drawtext` with per-segment `enable='between(t,...)'` was abandoned — FFmpeg's
+filtergraph parser mangles the escaping with 10+ chained filters.
 
 Instead, `_write_ass()` generates a temp `.ass` (Advanced SubStation Alpha) file:
-- `[Script Info]` includes `PlayResX/PlayResY` probed from the input via `ffprobe` — without this libass assumes 384×288 and scales font size up ~5× 
-- `[V4+ Styles]` maps all `SubtitleStyle` fields to ASS format (colours in `&HAABBGGRR`, alignment in numpad layout)
+- `[Script Info]` includes `PlayResX/PlayResY` probed via `_probe_resolution()` —
+  without this libass assumes 384×288 and scales font size up ~5×
+- `[V4+ Styles]` maps all `SubtitleStyle` fields (colours in `&HAABBGGRR`, alignment
+  in numpad layout)
 - `[Events]` has one `Dialogue:` line per segment
 
 FFmpeg command: `ffmpeg -vf ass=/tmp/tmpXXX.ass -c:v libx264 -crf 18 -preset fast -c:a copy`
 
-Temp `.ass` file deleted in `finally` block regardless of success/failure.
+Temp `.ass` deleted in `finally` regardless of success/failure.
 
-**`_probe_resolution()`** — runs `ffprobe -show_streams -select_streams v:0` on the input, returns `(width, height)`, defaults to `(1920, 1080)` on any error.
-
----
-
-### `ExportDialog.py`
-**Added:** "Subtitles" `QGroupBox` with `chk_burn_subs` checkbox.
-- Auto-enabled (checked + enabled) when `subtitle_segments` is passed in
-- Greyed out with explanatory label if no transcript exists
-
-**Constructor new params:**
-```python
-ExportDialog(
-    project,
-    parent             = None,
-    subtitle_segments  = None,   # list[TranscriptSegment] or None
-    subtitle_style     = None,   # SubtitleStyle or None
-)
-```
-
-**Two-pass export flow:**
-1. `ExportWorker` renders the timeline → output path (`_on_export_done`)
-2. If burn checkbox is ticked: `SubtitleBurnWorker` burns subtitles from output path → temp file → `shutil.move` replaces original (`_on_burn_done`)
-3. `_on_finished` called either way
-
-Both workers are cancelled in `_on_cancel` and `closeEvent`.
-
----
-
-### `PreviewWidget.py`
-**Added imports:** `SubtitleOverlay`, `SubtitleStyle`
-
-**Added state:** `self._subtitle_overlay: SubtitleOverlay | None = None`
-
-**Added after `video_widget` creation:**
-```python
-self._subtitle_overlay = SubtitleOverlay(self.video_widget)
-self._subtitle_overlay.resize(self.video_widget.size())
-self._subtitle_overlay.show()
-```
-
-**`update_position` calls added** in three places:
-- `_on_player_position_changed` (SOURCE mode)
-- `_tl_tick` (TIMELINE mode playback tick)
-- `_tl_seek` (TIMELINE mode seek)
-
-**Added `resizeEvent`** to keep overlay sized to `video_widget`.
-
-**New public methods:**
-```python
-set_subtitle_segments(segments: list)
-set_subtitle_style(style)
-clear_subtitles()
-set_subtitles_visible(visible: bool)
-```
+**Cancel path:** `_run_ffmpeg_burn` calls `process.terminate()` then `process.wait()`
+before deleting the partial output file. The `wait()` is important — terminate is
+async and the file handle may still be open without it.
 
 ---
 
 ### `VideoEditorWidget.py`
-**New imports:** `WhisperWorker`, `WhisperDialog`, `TranscriptPanel`, `SubtitleStyle`, `SubtitleStyleDialog`
-
-**New toolbar button:** `🎙 Transcribe` (between URL Import and Export)
-
-**New panel:** `TranscriptPanel` as third pane in `self._upper_splitter` (stored as `self._upper_splitter` not a local — needed for deferred `setSizes`)
-
-**New signal connections:**
-```python
-transcript_panel.seek_requested  → _on_seek
-transcript_panel.close_requested → _hide_transcript_panel
-transcript_panel.style_requested → _open_subtitle_style
-```
-
-**New methods:**
+**Key methods added this session:**
 
 | Method | Purpose |
 |---|---|
-| `_transcribe()` | faster-whisper import check → `WhisperDialog` → `WhisperWorker` → reveal panel |
-| `_on_whisper_finished(segments)` | Store `_subtitle_segments`, push to overlay |
+| `_transcribe()` | Import check → `WhisperDialog` → `WhisperWorker` → reveal panel |
+| `_on_whisper_finished(segments)` | Store segments, push to preview scene, enable subtitle button |
 | `_on_whisper_error(msg)` | Show status + `QMessageBox` |
-| `_open_subtitle_style()` | `SubtitleStyleDialog` → update `_subtitle_style` → push to overlay |
-| `_hide_transcript_panel()` | Collapse panel in splitter, `setSizes` to give space back to preview |
+| `_toggle_subtitles()` | Toggle `_subs_visible`, sync `btn_subs`, call `preview.set_subtitles_visible()` |
+| `_open_subtitle_style()` | `SubtitleStyleDialog` → update `_subtitle_style` → push to preview |
+| `_hide_transcript_panel()` | Collapse panel in splitter |
+| `_on_player_error(error, msg)` | Handle `ResourceError` (suspend/resume audio loss) |
+| `_reconnect_audio()` | Create fresh `QAudioOutput`, reattach to player — called 1s after error |
+| `_save_sidecar(path)` | Write `<project>.vep.meta` JSON alongside project file |
+| `_load_sidecar(path)` | Restore segments, style, panel visibility from sidecar |
 
-**`_export()` updated:** passes `subtitle_segments` and `subtitle_style` to `ExportDialog`.
+**Subtitle toggle button (`btn_subs`):**
+- `setCheckable(True)` — Qt handles pressed/released visual state
+- Starts `setEnabled(False)` — enabled in `_on_whisper_finished` and `_load_sidecar`
+- `T` keyboard shortcut wired via `QShortcut`; the shortcut handler checks
+  `self.sender() is not self.btn_subs` to distinguish shortcut from button click
 
-**`cleanup()` updated:** cancels and joins all `_whisper_workers`.
+**`_export()` passes** `subtitle_segments` and `subtitle_style` to `ExportDialog`,
+which owns the two-pass export pipeline (timeline render → subtitle burn).
+
+---
+
+## Project Persistence — Sidecar File
+
+The `.vep` project file format is unchanged. Subtitle/transcript state is saved to a
+companion JSON sidecar at `<project_path>.meta` (e.g. `project-sunglasses.vep.meta`).
+
+**Sidecar schema (version 1):**
+```json
+{
+  "version": 1,
+  "subtitle_segments": [
+    {"start": 0.0, "end": 5.2, "text": "I wear my sunglasses at night"}
+  ],
+  "subtitle_style": {
+    "font_size": 22, "font_weight": "Bold", "font_family": "Arial",
+    "text_color": [255, 255, 255, 255],
+    "outline_color": [0, 0, 0, 255],
+    "bg_color": [0, 0, 0, 140],
+    "outline_width": 2, "bg_enabled": false,
+    "position": "Bottom Centre", "margin": 40
+  },
+  "transcript_visible": true,
+  "subs_visible": true
+}
+```
+
+The sidecar is optional — if missing or corrupt, the project opens normally without
+subtitles and no error is raised. If you rename the `.vep` file without renaming the
+`.meta` file, the sidecar will not be found on next open.
+
+---
+
+## Environment Setup (`ide.sh`)
+
+`torch` is installed separately from the main `REQUIREMENTS` array to ensure the
+correct CUDA build is selected. **Do NOT add `torch` back to `REQUIREMENTS`** — the
+PyPI default is CPU-only and silently breaks GPU transcription.
+
+`install_torch()` detects GPU compute capability via
+`nvidia-smi --query-gpu=compute_cap` and maps it to the correct PyTorch wheel:
+
+| Compute capability | GPU family | PyTorch wheel |
+|---|---|---|
+| sm_6x (≤62) | Pascal — GTX 10xx, 1080 Ti | `cu118` |
+| sm_7x (≤72) | Volta — V100 | `cu118` |
+| sm_75 | Turing — RTX 20xx, GTX 16xx | `cu121` |
+| sm_8x (≤86) | Ampere — RTX 30xx, A100 | `cu124` |
+| sm_89 | Ada Lovelace — RTX 40xx | `cu124` |
+| sm_90+ | Hopper / Blackwell — H100, RTX 50xx | `cu128` |
+| No GPU | — | `cpu` |
+
+**Why compute capability not driver CUDA version:** Driver CUDA version reflects the
+maximum CUDA the driver *supports*, not what the GPU can run. A 1080 Ti (sm_61) with
+a CUDA 13.0 driver would incorrectly get a cu128 wheel that drops sm_61 support.
+Compute capability is the correct discriminator.
+
+---
+
+## Audio Recovery — Suspend/Resume
+
+Qt6 + PipeWire crashes with `QSocketNotifier: Socket notifiers cannot be enabled or
+disabled from another thread` after system suspend/resume. Root cause: PipeWire drops
+the audio connection; Qt's multimedia thread panics trying to re-enable socket
+notifiers on wake.
+
+**Fix in `VideoEditorWidget`:**
+```python
+self.preview.player.errorOccurred.connect(self._on_player_error)
+```
+
+On `QMediaPlayer.Error.ResourceError` → stop player cleanly → 1-second delay →
+create fresh `QAudioOutput` and reattach. The delay gives PipeWire time to recover.
+This doesn't suppress the log warnings but prevents the segfault.
+
+---
+
+## Dependencies
+
+### Core (in `REQUIREMENTS`)
+```bash
+pip install faster-whisper
+```
+
+faster-whisper downloads Whisper model weights from HuggingFace on first use.
+Cached in `~/.cache/huggingface/hub/`. Model sizes: tiny ~39MB, base ~74MB,
+small ~244MB, medium ~769MB, large-v3 ~1.5GB.
+
+### Installed separately
+```bash
+bash ide.sh install   # detects GPU, installs correct torch wheel automatically
+```
+
+### Pre-existing
+- `ffmpeg` + `ffprobe` on PATH (Ubuntu: `sudo apt install ffmpeg`)
+- `libass` — included in the Ubuntu `ffmpeg` package (`--enable-libass` confirmed)
+- PyQt6, PyQt6-Qt6, PyQt6-sip, PyQt6-WebEngine
 
 ---
 
 ## Known Issues / Testing Notes
 
 ### Tested and working
-- Transcription of short music/singing clips (VAD off by default)
+- CUDA GPU auto-detection in `WhisperDialog` (Pascal/GTX 10xx picks cu118 correctly)
+- Transcription of music/singing clips (VAD off by default)
 - Transcript panel reveal/collapse with correct splitter sizing
-- Live subtitle overlay during SOURCE and TIMELINE playback
-- Export → subtitle burn two-pass pipeline
+- Transcript search — filter, highlight, seek on Enter
+- Live subtitle preview via `QGraphicsTextItem` in SOURCE and TIMELINE modes
+- Subtitle toggle button + `T` keyboard shortcut
+- Export → subtitle burn two-pass pipeline (ASS filter approach)
 - `.srt` / `.vtt` / `.txt` export from transcript panel
 - Clickable timestamps seeking preview
 - Style dialog live preview swatch
+- Project sidecar save/load — segments, style, panel state all restored on reopen
+- Audio reconnect after suspend/resume (no more segfault)
 
 ### Not yet tested / known gaps
-- **Multi-clip timelines** — `_subtitle_segments` holds transcription for one clip at a time; no timestamp offset is applied for clips that don't start at t=0 on the timeline. For a multi-clip export the burn will show subtitles at the source clip's timestamps, not the timeline position.
-- **Long files** — VAD off means Whisper processes the full audio; large files may be slow on CPU. Exposing a device selector (CPU/CUDA) in `WhisperDialog` would help.
-- **Overlay resize on splitter drag** — `resizeEvent` on `PreviewWidget` resizes the overlay, but Qt doesn't always fire `resizeEvent` on splitter handle drags. May need an event filter on `video_widget` instead.
-- **Font availability** — `SubtitleStyleDialog` uses `QFontComboBox` which lists system fonts. ASS burn uses `fontconfig` to find the closest match; exotic fonts may not render the same in the burned output vs the overlay preview.
-- **Cancel during burn** — `SubtitleBurnWorker.cancel()` sets a flag that is checked between subprocess output lines. FFmpeg is terminated via `process.terminate()`. The temp output file is not cleaned up on cancel — could leave orphaned files in `/tmp`.
-- **Emoji/Unicode in filenames** — FFmpeg on Linux handles these fine (confirmed in logs), but the ASS `text` field should be monitored for any characters that break libass rendering.
+- **Multi-clip timelines** — `_subtitle_segments` holds transcription for one clip
+  at a time. No timestamp offset is applied for clips that don't start at t=0 on the
+  timeline. For a multi-clip export the burn will show subtitles at the source clip's
+  timestamps, not the timeline position.
+- **Long files on CPU** — VAD off means Whisper processes full audio; large files are
+  slow without a GPU. CUDA device selector is implemented but requires correct PyTorch
+  wheel (run `bash ide.sh install`).
+- **Font availability** — `SubtitleStyleDialog` uses `QFontComboBox` (system fonts).
+  ASS burn uses `fontconfig` to find the closest match; exotic fonts may not render
+  identically in burned output vs preview.
+- **Sidecar file rename** — renaming the `.vep` without renaming the `.meta` loses
+  the sidecar. Could be addressed by embedding sidecar data inside the `.vep` format.
+- **Word-level timestamps** — `TranscriptSegment.words` is populated by faster-whisper
+  when `word_timestamps=True` is passed to `model.transcribe()`. Currently set to
+  `False` in `WhisperWorker`. Enabling it would unlock karaoke-style word
+  highlighting in the preview scene.
 
 ### Suggested next steps
-1. Multi-clip subtitle offset support — apply timeline clip start time to segment timestamps before burn
-2. Word-level timestamps — `word_timestamps=True` in `WhisperWorker` already has the field; wire to `SubtitleOverlay` for karaoke-style highlighting
-3. CUDA device selector in `WhisperDialog`
-4. Subtitle preview toggle button in toolbar (show/hide overlay without clearing)
-5. Persist `SubtitleStyle` to the project save file
+1. **Multi-clip subtitle offset** — apply timeline clip start time to segment
+   timestamps before burn. Requires reading `TimelineWidget`'s clip model to get
+   each clip's timeline position and shifting segment start/end accordingly.
+2. **Word-level karaoke highlighting** — set `word_timestamps=True` in
+   `WhisperWorker`, wire `TranscriptSegment.words` to `_update_subtitle()` in
+   `PreviewWidget` to highlight the active word in `_sub_text` using HTML markup.
+3. **Confidence colouring in TranscriptPanel** — `faster-whisper` exposes
+   `avg_logprob` and `no_speech_prob` per segment. Map to amber/red colouring in
+   `SegmentRow` so users know where to double-check.
+4. **Persist default `SubtitleStyle`** across sessions (not per-project) — save to
+   a global preferences file in the IDE config directory.
+5. **Sidecar embedded in `.vep`** — move meta into the project file to make rename
+   safe, requires changes to `ClipModel.Project.save/load`.
 
 ---
 
-## Dependencies
+## Deleted Files
 
-### New (this session)
-```bash
-pip install faster-whisper
-```
-
-faster-whisper downloads Whisper model weights from HuggingFace on first use (~74MB for `base`). Models are cached in `~/.cache/huggingface/hub/`.
-
-### Pre-existing
-- `ffmpeg` + `ffprobe` on PATH (Ubuntu: `sudo apt install ffmpeg`)
-- `libass` — included in the Ubuntu `ffmpeg` package (confirmed: `--enable-libass` in build flags)
-- PyQt6, PyQt6-Qt6, PyQt6-sip
-
----
-
-## Commit Suggestion
-
-```
-feat(VideoEditorPlugin): add Whisper transcription + subtitle burn-in
-
-New files:
-  WhisperWorker.py       — faster-whisper QThread, streams TranscriptSegments
-  WhisperDialog.py       — model/language/VAD picker dialog
-  TranscriptPanel.py     — live scrollable transcript with seek, copy, export
-  SubtitleStyle.py       — shared style dataclass (font, colour, position)
-  SubtitleStyleDialog.py — visual style editor with live preview swatch
-  SubtitleOverlay.py     — transparent QPainter overlay on QVideoWidget
-
-Modified:
-  FFmpegWorker.py   — SubtitleBurnWorker (ASS filter approach, ffprobe resolution)
-  ExportDialog.py   — subtitle burn checkbox, two-pass export pipeline
-  PreviewWidget.py  — SubtitleOverlay wiring, position_changed hooks
-  VideoEditorWidget.py — Transcribe toolbar button, transcript/style state
-
-Fixes:
-  - VAD disabled by default (was silently dropping all music segments)
-  - Qt6 splitter reveal requires deferred setSizes via QTimer.singleShot
-  - ASS PlayResX/PlayResY from ffprobe prevents libass 384x288 assumption
-  - Default font size 22px (was 36px, appeared oversized without PlayRes)
-```
+- **`SubtitleOverlay.py`** — removed. Subtitle rendering moved into `PreviewWidget`
+  using `QGraphicsTextItem` within `QGraphicsScene`. The previous approach of
+  overlaying a transparent widget on `QVideoWidget` failed on Qt6's FFmpeg backend
+  due to native OpenGL surface z-order. The file is gone — do not recreate it.
