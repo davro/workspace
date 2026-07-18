@@ -7,6 +7,7 @@ set -e
 FILENAME="ide.py"
 ACTION="$1"
 WORKSPACE_ENV="workspace-env"
+PLUGINS_DIR="ide/plugins"
 
 # PyQt6-Multimedia
 REQUIREMENTS=(
@@ -145,6 +146,39 @@ update_packages() {
   pip install --upgrade "${REQUIREMENTS[@]}"
 }
 
+install_plugin_dependencies() {
+  # Plugins can depend on system binaries (k3d, terraform, kubectl, ...)
+  # that pip has no way to install. Convention: a plugin that needs one
+  # ships ide/plugins/<PluginName>/install.sh, which is expected to be
+  # idempotent (check `command -v` before installing anything) and is
+  # run as-is, outside the venv, since it's installing system tools
+  # rather than Python packages.
+  echo "[+] Checking plugin dependencies"
+
+  if [ ! -d "$PLUGINS_DIR" ]; then
+    echo "[!] No plugins directory found at $PLUGINS_DIR, skipping"
+    return
+  fi
+
+  local found=0
+  for install_script in "$PLUGINS_DIR"/*/install.sh; do
+    [ -e "$install_script" ] || continue
+    found=1
+    local plugin_name
+    plugin_name=$(basename "$(dirname "$install_script")")
+    echo "[+] Running plugin installer: $plugin_name"
+    if bash "$install_script"; then
+      echo "[+] $plugin_name dependencies OK"
+    else
+      echo "[!] $plugin_name installer exited non-zero — continuing"
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo "[+] No plugin install.sh scripts found"
+  fi
+}
+
 banner() {
   echo "################################################################################"
   echo "#"
@@ -167,6 +201,7 @@ if [ ! -d "$WORKSPACE_ENV" ]; then
   activate_venv
   install_packages
   install_torch
+  install_plugin_dependencies
 else
   activate_venv
 fi
@@ -177,10 +212,12 @@ case "$ACTION" in
   install)
     install_packages
     install_torch
+    install_plugin_dependencies
     ;;
   update)
     update_packages
     install_torch
+    install_plugin_dependencies
     ;;
   "" )
     # No action
