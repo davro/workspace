@@ -1,8 +1,11 @@
 # HANDOVER — Infrastructure Plugin (Workspace IDE)
 
-Status as of this baseline: **working, manually verified end-to-end on a real
-machine** (not just "compiles"). Read this before touching the code — it
-covers *why* things are shaped this way, not just what they do.
+Status as of this update: **fully verified end-to-end on a real machine,
+including the whole TESTING.md checklist** — create/deploy/logs/delete on
+the Kubernetes side, and the full init→destroy cycle on the Terraform
+side. A QThread crash was found and fixed along the way (see gotcha #8) —
+read that one before touching `ProcessRunner` or `InfrastructureWidget`'s
+threading.
 
 ---
 
@@ -45,20 +48,35 @@ locking up on a slow `terraform apply`.
   terraform, docker.io via apt, enables the docker service, adds user to
   docker group.
 - Create Cluster (k3d) — confirmed full successful cluster creation log,
-  kubectl context auto-switches to `k3d-<name>`.
+  kubectl context auto-switches to `k3d-<name>`. Re-confirmed clean
+  (no crash) after the QThread parenting fix (gotcha #8).
 - Refresh Pods — confirmed real pod list rendered (coredns, traefik,
   metrics-server, local-path-provisioner, etc. — the standard k3d system
-  pods).
-- View Logs — confirmed real log output streamed for a selected pod.
-- Delete Cluster — not yet exercised by the user as of this baseline
-  (they said "didn't tear it down yet"). Should still work — same
-  argv-builder pattern as create — but hasn't been visually confirmed.
-- Deploy k8s/ Manifests — NOT yet exercised (no project with a `k8s/`
-  folder tested against yet).
-- Terraform tab (init/plan/apply/destroy/validate/fmt) — NOT yet
-  exercised against a real Terraform config. Command-building logic is
-  straightforward and mirrors the Kubernetes side, but treat as
-  lower-confidence than the Kubernetes tab until someone runs it.
+  pods), and confirmed for an actual deployed workload (see Deploy k8s/
+  Manifests below). Also confirmed auto-populating on panel load and on
+  switching to the Kubernetes tab, without needing a manual click first.
+- View Logs — confirmed real log output for both a k3d system pod
+  (coredns) and a deployed application pod (nginx's own startup output).
+- Deploy k8s/ Manifests — **confirmed working end-to-end**, using
+  `test-infra-project/k8s/nginx-test.yaml` (see TESTING.md in that
+  folder): `kubectl apply` succeeded, the pod appeared via Refresh Pods,
+  and its logs rendered correctly via View Logs.
+- Delete Cluster — **confirmed working**: clean k3d deletion log ending
+  `[exit code 0]`, and Refresh Pods afterward correctly showed "No
+  cluster reachable" instead of erroring.
+- Terraform tab (init/plan/apply/destroy/validate/fmt) — **confirmed
+  working end-to-end**, using `test-infra-project/terraform/main.tf`
+  (the `hashicorp/local` provider — no cloud creds/cost). Full sequence
+  run and verified: init (provider installed, lock file created) →
+  validate (`Success!`) → fmt → plan (`1 to add`) → apply (`1 added`,
+  file confirmed on disk via `cat`) → destroy (`1 destroyed`, file
+  confirmed GONE via `cat` afterward — not just a "reported success").
+
+Every path in the original TESTING.md checklist is now verified. If you
+add new actions (Helm tab, cluster dropdown, etc.), add a corresponding
+section to TESTING.md and follow the same "assert the real-world side
+effect, not just the console output" pattern used above (e.g. `cat`-ing
+the file that was supposedly created/destroyed).
 
 ## Real gotchas hit during setup (don't re-litigate these — just know them)
 
@@ -121,6 +139,65 @@ locking up on a slow `terraform apply`.
    was deliberately changed to disambiguate — don't revert the wording
    without preserving that distinction some other way.
 
+8. **QThread destroyed mid-run → hard process abort ("core dumped").**
+   Hit in real use: `QThread: Destroyed while thread '' is still
+   running` followed by an aborted process. Root cause: `ProcessRunner`
+   was constructed with no Qt parent, so its C++ lifetime depended only
+   on Python's reference count. If the widget holding it gets torn down
+   while a command (e.g. a 30-50s cluster create) is still running, Qt
+   destroys the still-running QThread out from under itself — this is a
+   hard Qt-level abort, NOT a catchable Python exception. Fix (now in
+   place, don't undo):
+   - `ProcessRunner.__init__` takes `parent`, and
+     `InfrastructureWidget.run_command()` passes `parent=self` — ties
+     the thread's C++ lifetime to Qt's ownership tree.
+   - `ProcessRunner.cancel()` now escalates: `terminate()` → wait 3s →
+     `kill()` if still alive, instead of asking once and giving up.
+   - New `InfrastructureWidget.shutdown()` calls `cancel()` then
+     *blocks* on `.wait()` before allowing the widget to be destroyed.
+     `InfrastructurePlugin.cleanup()` calls this (not a bare
+     `_runner.cancel()` anymore), and there's also a `closeEvent`
+     override on the widget as a second safety net for teardown paths
+     that might skip the plugin's `cleanup()` hook.
+   If you ever construct a `ProcessRunner` without going through
+   `run_command()`, make sure you still pass a parent and still go
+   through a wait-before-destroy path — this bug is easy to
+   reintroduce by accident.
+
+9. **`api.get_workspace_path()` can return a path with an un-resolved
+   `..` segment.** Seen in practice as
+   `/home/davro/workspace/workspace-dev/..`. Harmless for `is_dir()`/
+   `exists()` checks (the OS resolves it), but confusing to display
+   as-is — this is exactly what happened when a user created a
+   `terraform/` folder one level above what they thought was the open
+   project, and the plugin's (then nonexistent) debug output couldn't
+   tell them why detection "wasn't working." Fix: `_project_path()` now
+   calls `.resolve()` before returning, and the Overview tab has a
+   dedicated "📍 Scanning Path" box showing the resolved path — keep
+   both. If you add other places that display or compare paths from
+   `get_workspace_path()`, resolve them too rather than assuming they're
+   already clean.
+
+10. **Default cluster name could double up as "workspace-workspace."**
+    `ProjectDetector.default_cluster_name()` prepends `workspace-` to the
+    project folder's name. If that folder is itself named `workspace`
+    (or already starts with it), naively prepending produced
+    `workspace-workspace`. Fixed by skipping the prefix when the name
+    already starts with `workspace`. Minor, but if you touch this
+    function again, keep that guard.
+
+## `test-infra-project/` — keep or discard, your call
+
+A throwaway project (delivered alongside this plugin) with a minimal
+`k8s/nginx-test.yaml` and a `terraform/main.tf` using the `hashicorp/local`
+provider (no cloud creds/cost) — this is what all the "confirmed working
+end-to-end" claims above were actually tested against. It has its own
+`TESTING.md` with the exact expected output at each step. Either delete
+it now that everything's passed, or keep it around as a permanent
+smoke-test fixture for regression-checking future changes — recommended
+if you're going to add features like a Helm tab or a cluster-list
+dropdown, since it gives you a known-good baseline to re-run.
+
 ## Deliberately cut from scope (don't add back without a real reason)
 
 From the original brainstorm, NOT implemented, on purpose:
@@ -153,9 +230,6 @@ From the original brainstorm, NOT implemented, on purpose:
   plugin is ever pointed at anything beyond local/disposable dev infra,
   reconsider whether auto-approve is still appropriate, or add a plan-
   preview step before the confirm dialog.
-- `refresh_pods()` and the pod list don't auto-refresh — it's a manual
-  button. Fine for now; would need a QTimer or a k3d/kubectl watch if
-  live updates are ever wanted.
 - No handling yet for multiple clusters existing simultaneously beyond
   what's in the single `cluster_name_edit` field — `k3d cluster list` is
   wired in `KubernetesManager.list_clusters_command()` but nothing in the
@@ -163,15 +237,22 @@ From the original brainstorm, NOT implemented, on purpose:
 - Terraform directory field auto-fills from detection but there's no
   validation beyond "is it a directory" — no check that it actually
   contains `.tf` files.
+- Opening the panel now does two blocking checks in a row at load time
+  (`docker info` for the daemon check, `kubectl get pods` for the pod
+  list) — both via the synchronous `run_quick()`, each with its own
+  timeout (5s / 8s). On a slow machine or unreachable daemon this could
+  add a few seconds of pause when the panel first opens. Not yet reported
+  as an actual problem, but if it ever is, the fix is moving these onto
+  a background thread rather than synchronous calls.
 
 ## Suggested next steps (not started)
 
-1. Exercise Delete Cluster and the full Terraform tab against a real
-   project, since those are still lower-confidence than what's been
-   manually verified.
-2. Consider a cluster-list dropdown instead of a free-text name field,
+1. Consider a cluster-list dropdown instead of a free-text name field,
    using the already-built `list_clusters_command()` /
    `parse_cluster_list()`.
-3. If Helm support becomes a real need: add `HelmManager.py` following
+2. If Helm support becomes a real need: add `HelmManager.py` following
    the exact pattern of `TerraformManager.py`, plus a Helm tab in the
    widget — don't restructure anything else.
+3. If load-time responsiveness becomes an actual complaint (see rough
+   edge above), move the daemon check and pod refresh off the
+   synchronous path.

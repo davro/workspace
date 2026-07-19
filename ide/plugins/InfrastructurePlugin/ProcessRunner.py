@@ -26,15 +26,26 @@ class ProcessRunner(QThread):
     line_ready = pyqtSignal(str)
     finished_ok = pyqtSignal(int)
 
-    def __init__(self, command, cwd=None, env=None, label=None):
+    def __init__(self, command, cwd=None, env=None, label=None, parent=None):
         """
         Args:
             command: list[str] - argv, e.g. ["k3d", "cluster", "create", "dev"]
             cwd: working directory for the command
             env: optional dict to override/extend the process environment
             label: optional human-readable label, useful for logging
+            parent: Qt parent (typically the widget dispatching the
+                command). Passing this matters: without a Qt parent, this
+                QThread's C++ lifetime is tied only to Python's reference
+                count on it. If the owning widget is garbage-collected
+                while the thread is still running (e.g. the panel closes
+                mid-command), Qt destroys the thread object out from under
+                the still-running OS thread and hard-aborts the whole
+                process ("QThread: Destroyed while thread is still
+                running") - not a catchable Python exception. With a
+                parent set, Qt's ownership tree keeps it alive until it's
+                explicitly cleaned up (see cancel()/wait() in the widget).
         """
-        super().__init__()
+        super().__init__(parent)
         self.command = command
         self.cwd = str(cwd) if cwd else None
         self.env = env
@@ -83,13 +94,28 @@ class ProcessRunner(QThread):
         self.finished_ok.emit(return_code)
 
     def cancel(self):
-        """Terminate the running process, if any."""
+        """
+        Ask the running process to stop. Tries a graceful terminate()
+        first; if the process is still alive shortly after, escalates to
+        kill(). Either way, this only *requests* a stop - it does NOT
+        wait for run() to actually finish. Callers that need the thread
+        fully stopped before proceeding (e.g. before the widget holding
+        it is destroyed) must still call `.wait()` afterward - see
+        InfrastructureWidget.shutdown().
+        """
         self._killed = True
-        if self._process and self._process.poll() is None:
+        if not self._process or self._process.poll() is not None:
+            return
+        try:
+            self._process.terminate()
+            self._process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
             try:
-                self._process.terminate()
+                self._process.kill()
             except Exception:
                 pass
+        except Exception:
+            pass
 
 
 def run_quick(command, cwd=None, timeout=5):

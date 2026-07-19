@@ -89,7 +89,13 @@ class ProjectDetector:
         """A stable, project-scoped cluster name, e.g. 'workspace-myproject'."""
         if not self.project_path:
             return "workspace-default"
-        return f"workspace-{self.project_path.name}".lower().replace("_", "-")
+        name = self.project_path.name.lower().replace("_", "-")
+        # Avoid "workspace-workspace" when the project folder is itself
+        # named "workspace" (or already starts with it) - the prefix
+        # exists to scope the name, not to repeat it.
+        if name.startswith("workspace"):
+            return name
+        return f"workspace-{name}"
 
     # ------------------------------------------------------------------
     # Tool detection

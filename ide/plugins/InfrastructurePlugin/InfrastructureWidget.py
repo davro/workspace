@@ -61,6 +61,7 @@ class InfrastructureWidget(QWidget):
 
         self._build_ui()
         self.refresh_overview()
+        self.refresh_pods()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -69,12 +70,34 @@ class InfrastructureWidget(QWidget):
     def _project_path(self):
         try:
             path = self.api.get_workspace_path()
-            return Path(path) if path else Path.cwd()
+            raw = Path(path) if path else Path.cwd()
         except Exception:
-            return Path.cwd()
+            raw = Path.cwd()
+        # get_workspace_path() can return a path with an un-resolved ".."
+        # segment (seen in practice). is_dir()/exists() checks handle that
+        # fine since the OS resolves it, but leaving it in place makes the
+        # Scanning Path debug label misleading - resolve() collapses it to
+        # a clean absolute path instead.
+        try:
+            return raw.resolve()
+        except Exception:
+            return raw
 
     def log(self, message):
         self.console.append(message)
+
+    def _on_tab_changed(self, index):
+        """
+        Keep each tab's data current without requiring a manual refresh
+        click first - most noticeably, the pod list previously stayed
+        empty until Refresh Pods was clicked, even right after switching
+        onto the Kubernetes tab. Indices match the fixed addTab() order
+        in _build_ui(): 0=Overview, 1=Kubernetes, 2=Terraform.
+        """
+        if index == 0:
+            self.refresh_overview()
+        elif index == 1:
+            self.refresh_pods()
 
     def _busy(self, is_busy):
         """Disable action buttons while a command is running so two
@@ -91,7 +114,7 @@ class InfrastructureWidget(QWidget):
 
         self.log(f"$ {' '.join(command)}")
         self._busy(True)
-        self._runner = ProcessRunner(command, cwd=cwd, label=label)
+        self._runner = ProcessRunner(command, cwd=cwd, label=label, parent=self)
         self._runner.line_ready.connect(self.log)
 
         def _done(code):
@@ -103,6 +126,39 @@ class InfrastructureWidget(QWidget):
 
         self._runner.finished_ok.connect(_done)
         self._runner.start()
+
+    def shutdown(self):
+        """
+        Must be called before this widget is destroyed (the plugin's
+        cleanup() does this). Blocks briefly to guarantee no QThread is
+        still running when Qt tears the widget down - destroying a
+        running QThread is a hard, unrecoverable Qt-level abort
+        ("QThread: Destroyed while thread is still running"), not
+        something a try/except can catch afterward. Cluster-create can
+        legitimately take 30-50+ seconds, so this can genuinely have
+        something to wait for, not just a formality.
+        """
+        if self._runner is None:
+            return
+        self.log("[!] Stopping in-flight command before shutdown...")
+        self._runner.cancel()
+        if not self._runner.wait(5000):
+            # cancel() already tried terminate() then kill() on the
+            # subprocess itself - if the QThread STILL hasn't exited
+            # after 5s, something is stuck reading a pipe that will
+            # never close. Give it one more grace period; if that also
+            # fails there's nothing safe left to do but proceed, since
+            # blocking the whole IDE shutdown indefinitely is worse.
+            self._runner.wait(3000)
+        self._runner = None
+
+    def closeEvent(self, event):
+        # Defense in depth: if the IDE ever tears this widget down through
+        # a path that doesn't go through the plugin's cleanup() hook (e.g.
+        # closing the sidebar tab directly rather than a full plugin
+        # unload), this still catches it before Qt destroys the widget.
+        self.shutdown()
+        super().closeEvent(event)
 
     def _confirm(self, title, message):
         reply = QMessageBox.question(
@@ -148,6 +204,7 @@ class InfrastructureWidget(QWidget):
         self.tabs.addTab(self._build_overview_tab(), "\U0001F4CB Overview")
         self.tabs.addTab(self._build_kubernetes_tab(), "\u2638 Kubernetes")
         self.tabs.addTab(self._build_terraform_tab(), "\U0001F5FA Terraform")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         splitter.addWidget(self.tabs)
 
         console_box = _group("Console")
@@ -181,6 +238,17 @@ class InfrastructureWidget(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
+        path_box = _group("\U0001F4CD Scanning Path")
+        path_layout = QVBoxLayout(path_box)
+        self.scan_path_label = QLabel()
+        self.scan_path_label.setWordWrap(True)
+        self.scan_path_label.setStyleSheet(
+            "color: #4A9EFF; padding: 8px; background: #2D2D2D; border-radius: 5px; "
+            "font-family: 'Courier New', monospace;"
+        )
+        path_layout.addWidget(self.scan_path_label)
+        layout.addWidget(path_box)
+
         detect_box = _group("\U0001F4C1 This Project's Infra Directories")
         detect_layout = QVBoxLayout(detect_box)
         detect_hint = QLabel("Checks the open project's folders — not whether the CLI tools below are installed.")
@@ -208,6 +276,15 @@ class InfrastructureWidget(QWidget):
         return widget
 
     def refresh_overview(self):
+        # Re-resolve the project path every scan, not just at widget init -
+        # get_workspace_path() can change if the user switches projects
+        # without the on_project_opened hook firing (e.g. some multi-root
+        # workspace setups), and this label is the fastest way to catch a
+        # detector looking at the wrong path, as opposed to guessing.
+        current_path = self._project_path()
+        self.detector.project_path = current_path
+        self.scan_path_label.setText(str(current_path))
+
         self.detection = self.detector.detect()
         self.tools = ProjectDetector.detect_tools()
 

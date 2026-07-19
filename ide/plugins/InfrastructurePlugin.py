@@ -90,8 +90,8 @@ class InfrastructurePlugin:
 
     def cleanup(self):
         print(f"[{self.PLUGIN_NAME}] Cleaning up...")
-        if self.widget and getattr(self.widget, "_runner", None):
-            self.widget._runner.cancel()
+        if self.widget:
+            self.widget.shutdown()
         if self.api:
             self.api.unregister_all_plugin_hooks("infrastructure_plugin")
         self.initialized = False
