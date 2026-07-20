@@ -1,10 +1,11 @@
 # HANDOVER — Infrastructure Plugin (Workspace IDE)
 
 Status as of this update: **fully verified end-to-end on a real machine,
-including the whole TESTING.md checklist** — create/deploy/logs/delete on
-the Kubernetes side, and the full init→destroy cycle on the Terraform
-side. A QThread crash was found and fixed along the way (see gotcha #8) —
-read that one before touching `ProcessRunner` or `InfrastructureWidget`'s
+including the whole TESTING.md checklist**, PLUS a new multi-project
+feature (Active Project dropdown) verified against two real, separate
+projects with isolated clusters — see "Active Project dropdown" below.
+A QThread crash was found and fixed along the way (see gotcha #8) — read
+that one before touching `ProcessRunner` or `InfrastructureWidget`'s
 threading.
 
 ---
@@ -77,6 +78,57 @@ add new actions (Helm tab, cluster dropdown, etc.), add a corresponding
 section to TESTING.md and follow the same "assert the real-world side
 effect, not just the console output" pattern used above (e.g. `cat`-ing
 the file that was supposedly created/destroyed).
+
+## Active Project dropdown — multi-project support (new)
+
+The Overview tab now has an "🗂 Active Project" dropdown above Scanning
+Path, populated from `ide/core/ProjectsPanel.py`'s checked projects
+(reached via `self.api.get_main_window().projects_panel` -
+`get_active_projects()` / `projects_changed` signal). Picking a project
+re-scans THAT project's `terraform/`/`helm`/`k8s/` folders instead of
+whatever the IDE considers the single "current" workspace.
+
+**Verified working, real end-to-end test**, not just detection:
+- Two separate projects tested side by side: `test-infra-project/` and a
+  new `infrastructure/` project (with its own `terraform/`, `helm/`,
+  `k8s/` folders created specifically to test this).
+- Dropdown correctly listed both from the Projects panel's checkboxes.
+- Selecting `infrastructure` correctly re-scanned to show ITS
+  directories (not test-infra-project's), and the cluster name field
+  re-autofilled to `workspace-infrastructure`.
+- Created a separate k3d cluster for it, deployed a manifest into
+  `infrastructure/k8s/` (which was initially empty - see note below),
+  and **confirmed actual isolation**: `kubectl port-forward` +
+  `curl localhost:8080` from a browser rendered nginx's welcome page,
+  proving this project's deployment landed in its own cluster
+  completely independent of the other project's.
+- Confirmed the empty-directory case: deploying against a `k8s/` folder
+  with no manifest files in it does nothing useful (`kubectl apply`
+  errors with something like "no objects passed to apply") - not a bug,
+  just means TESTING.md-style guidance should note "put a manifest in
+  there first" for anyone testing against a freshly-created directory.
+
+**Implementation notes for anyone touching this:**
+- `InfrastructureWidget._explicit_project_path` is the override. `None`
+  means "follow whatever `get_workspace_path()` reports" (old
+  single-project behavior); once the user picks a project from the
+  dropdown, it's set and wins over `get_workspace_path()` on every
+  subsequent `refresh_overview()` call, including tab-switch
+  auto-refreshes.
+- `InfrastructurePlugin.on_project_opened()` (the IDE's own project-open
+  hook) now resets `_explicit_project_path` back to `None` and
+  repopulates the dropdown. This matters: without it, opening a
+  genuinely different project through the IDE's normal flow would be
+  silently ignored while a stale dropdown selection stayed pinned.
+- `_get_projects_panel()` reaches into `get_main_window().projects_panel`
+  defensively (try/except, falls back to `None`) because this isn't part
+  of the plugin API's formal contract, just the current `Workspace`
+  class's structure. If `ProjectsPanel` is ever renamed/restructured,
+  this degrades gracefully to the old single-project fallback rather
+  than crashing - keep that defensive pattern if you touch this again.
+- Switching the dropdown selection clears (not just re-autofills) the
+  cluster name and Terraform directory fields, so stale values from the
+  previously selected project can't linger.
 
 ## Real gotchas hit during setup (don't re-litigate these — just know them)
 
@@ -186,6 +238,16 @@ the file that was supposedly created/destroyed).
     already starts with `workspace`. Minor, but if you touch this
     function again, keep that guard.
 
+11. **`get_main_window().projects_panel` is not a documented plugin API
+    contract - it's just today's `Workspace` class structure.** Used to
+    build the Active Project dropdown (see that section above). Works
+    today because `Workspace.__init__` sets `self.projects_panel =
+    ProjectsPanel(...)`, but nothing guarantees that attribute name or
+    the `ProjectsPanel` class stays put. `_get_projects_panel()` wraps
+    this in a try/except specifically so a future rename degrades to the
+    old single-project fallback instead of crashing the whole panel -
+    don't remove that defensiveness to "clean up" the code.
+
 ## `test-infra-project/` — keep or discard, your call
 
 A throwaway project (delivered alongside this plugin) with a minimal
@@ -230,13 +292,18 @@ From the original brainstorm, NOT implemented, on purpose:
   plugin is ever pointed at anything beyond local/disposable dev infra,
   reconsider whether auto-approve is still appropriate, or add a plan-
   preview step before the confirm dialog.
-- No handling yet for multiple clusters existing simultaneously beyond
-  what's in the single `cluster_name_edit` field — `k3d cluster list` is
-  wired in `KubernetesManager.list_clusters_command()` but nothing in the
-  widget surfaces it yet (e.g. a dropdown of existing clusters).
+- No handling yet for multiple CLUSTERS existing simultaneously per
+  project beyond what's in the single `cluster_name_edit` field — note
+  this is distinct from the multi-PROJECT support above (which is done).
+  `k3d cluster list` is wired in `KubernetesManager.list_clusters_command()`
+  but nothing in the widget surfaces it yet (e.g. a dropdown of existing
+  clusters for whichever project is currently selected).
 - Terraform directory field auto-fills from detection but there's no
   validation beyond "is it a directory" — no check that it actually
-  contains `.tf` files.
+  contains `.tf` files. Same gap on the Kubernetes side: Deploy k8s/
+  Manifests against an empty (no `.yaml` files) directory just errors
+  from kubectl rather than the plugin catching it with a clearer message
+  first (hit in practice - see Active Project dropdown section above).
 - Opening the panel now does two blocking checks in a row at load time
   (`docker info` for the daemon check, `kubectl get pods` for the pod
   list) — both via the synchronous `run_quick()`, each with its own
@@ -247,12 +314,16 @@ From the original brainstorm, NOT implemented, on purpose:
 
 ## Suggested next steps (not started)
 
-1. Consider a cluster-list dropdown instead of a free-text name field,
-   using the already-built `list_clusters_command()` /
-   `parse_cluster_list()`.
+1. Consider a per-project cluster-list dropdown (see rough edge above)
+   instead of a free-text name field, using the already-built
+   `list_clusters_command()` / `parse_cluster_list()` — natural
+   follow-on now that the Active Project dropdown exists.
 2. If Helm support becomes a real need: add `HelmManager.py` following
    the exact pattern of `TerraformManager.py`, plus a Helm tab in the
    widget — don't restructure anything else.
 3. If load-time responsiveness becomes an actual complaint (see rough
    edge above), move the daemon check and pod refresh off the
    synchronous path.
+4. Consider a clearer pre-flight message for "Deploy k8s/ Manifests"
+   when the target directory has no `.yaml`/`.yml` files, rather than
+   letting kubectl's own error surface as-is.

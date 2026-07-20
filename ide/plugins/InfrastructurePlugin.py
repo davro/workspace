@@ -104,9 +104,18 @@ class InfrastructurePlugin:
     def on_project_opened(self, project_path):
         """Re-scan for terraform/helm/k8s content whenever a project is
         activated, so the Overview tab reflects the project actually
-        open - not whatever was open when the IDE started."""
+        open - not whatever was open when the IDE started.
+
+        This also clears any explicit Active Project dropdown selection.
+        Without that, opening a different project in the IDE while the
+        dropdown was pinned to some other checked project would be
+        silently ignored - the dropdown selection is meant to be an
+        override the user made on purpose, not something that should
+        outlive an actual project switch."""
         if self.widget:
+            self.widget._explicit_project_path = None
             self.widget.detector.project_path = Path(project_path)
+            self.widget._populate_project_combo(keep_selection=False)
             self.widget.refresh_overview()
 
     # ------------------------------------------------------------------

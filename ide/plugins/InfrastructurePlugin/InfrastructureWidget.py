@@ -15,7 +15,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit,
     QGroupBox, QSpinBox, QListWidget, QTabWidget, QLineEdit, QSplitter,
-    QMessageBox, QListWidgetItem
+    QMessageBox, QListWidgetItem, QComboBox
 )
 from PyQt6.QtCore import Qt
 
@@ -54,12 +54,19 @@ class InfrastructureWidget(QWidget):
         self.plugin = plugin
         self.api = plugin.api
         self._runner = None  # currently active ProcessRunner, if any
+        # None = follow whatever the IDE considers the "open" project
+        # (via get_workspace_path()). Set once the user picks something
+        # from the Active Project dropdown, and from then on that
+        # explicit choice wins over the IDE's own notion of "current".
+        self._explicit_project_path = None
 
         self.detector = ProjectDetector(self._project_path())
         self.detection = self.detector.detect()
         self.tools = ProjectDetector.detect_tools()
 
         self._build_ui()
+        self._connect_projects_panel()
+        self._populate_project_combo()
         self.refresh_overview()
         self.refresh_pods()
 
@@ -82,6 +89,88 @@ class InfrastructureWidget(QWidget):
             return raw.resolve()
         except Exception:
             return raw
+
+    def _get_projects_panel(self):
+        """
+        Returns the IDE's ProjectsPanel instance if one exists, else None.
+        Defensive on purpose - get_main_window()/projects_panel aren't
+        part of the formal plugin API contract, just an implementation
+        detail of the current Workspace class, so this degrades to the
+        old single-project behavior rather than crashing if either is
+        ever renamed or missing.
+        """
+        try:
+            main_window = self.api.get_main_window()
+            return getattr(main_window, "projects_panel", None)
+        except Exception:
+            return None
+
+    def _connect_projects_panel(self):
+        panel = self._get_projects_panel()
+        if panel is None:
+            return
+        try:
+            panel.projects_changed.connect(lambda: self._populate_project_combo(keep_selection=True))
+        except Exception:
+            pass
+
+    def _populate_project_combo(self, keep_selection=False):
+        """
+        Fills the Active Project dropdown from ProjectsPanel's checked
+        projects. Falls back to a single entry for the IDE's current
+        workspace if the panel isn't available or nothing's checked -
+        that keeps this plugin working exactly as before for anyone not
+        using the Projects panel feature.
+        """
+        panel = self._get_projects_panel()
+        active = []
+        if panel:
+            try:
+                active = panel.get_active_projects()
+            except Exception:
+                active = []
+
+        previous_path = self.project_combo.currentData() if keep_selection else None
+
+        self.project_combo.blockSignals(True)
+        self.project_combo.clear()
+
+        if not active:
+            fallback = self._project_path()
+            self.project_combo.addItem(f"{fallback.name}  (current workspace)", str(fallback))
+        else:
+            current_workspace = str(self._project_path())
+            for p in sorted(active, key=lambda x: Path(x).name.lower()):
+                self.project_combo.addItem(Path(p).name, p)
+            # Prefer keeping whatever was already selected (e.g. the
+            # Projects panel just added/removed an unrelated project),
+            # else the IDE's current workspace if it happens to be
+            # checked, else just the first one alphabetically.
+            target = previous_path if previous_path in active else (
+                current_workspace if current_workspace in active else active[0]
+            )
+            idx = self.project_combo.findData(target)
+            if idx >= 0:
+                self.project_combo.setCurrentIndex(idx)
+
+        self.project_combo.blockSignals(False)
+        # Sync the detector to whatever ended up selected - refresh_overview
+        # is called separately by whoever triggered this (init, or the
+        # dropdown's own change handler), so don't double-refresh here.
+        self._apply_selected_project(refresh=False)
+
+    def _apply_selected_project(self, refresh=True):
+        data = self.project_combo.currentData()
+        if not data:
+            return
+        self._explicit_project_path = Path(data)
+        # Switching projects should re-autofill the cluster name and
+        # Terraform directory for the NEW project, not keep whatever was
+        # typed for the previous one.
+        self.cluster_name_edit.clear()
+        self.tf_dir_edit.clear()
+        if refresh:
+            self.refresh_overview()
 
     def log(self, message):
         self.console.append(message)
@@ -238,6 +327,28 @@ class InfrastructureWidget(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
+        project_box = _group("\U0001F5C2 Active Project")
+        project_layout = QVBoxLayout(project_box)
+        project_hint = QLabel(
+            "Populated from the Projects panel's checked projects. Falls back to "
+            "the IDE's current workspace if none are checked."
+        )
+        project_hint.setStyleSheet("color: #888; font-style: italic; padding: 2px 8px;")
+        project_hint.setWordWrap(True)
+        project_layout.addWidget(project_hint)
+
+        project_row = QHBoxLayout()
+        self.project_combo = QComboBox()
+        self.project_combo.currentIndexChanged.connect(lambda _: self._apply_selected_project(refresh=True))
+        project_row.addWidget(self.project_combo, stretch=1)
+        project_refresh_btn = _button("\U0001F504")
+        project_refresh_btn.setToolTip("Reload the list from the Projects panel")
+        project_refresh_btn.setFixedWidth(40)
+        project_refresh_btn.clicked.connect(lambda: self._populate_project_combo(keep_selection=True))
+        project_row.addWidget(project_refresh_btn)
+        project_layout.addLayout(project_row)
+        layout.addWidget(project_box)
+
         path_box = _group("\U0001F4CD Scanning Path")
         path_layout = QVBoxLayout(path_box)
         self.scan_path_label = QLabel()
@@ -276,12 +387,11 @@ class InfrastructureWidget(QWidget):
         return widget
 
     def refresh_overview(self):
-        # Re-resolve the project path every scan, not just at widget init -
-        # get_workspace_path() can change if the user switches projects
-        # without the on_project_opened hook firing (e.g. some multi-root
-        # workspace setups), and this label is the fastest way to catch a
-        # detector looking at the wrong path, as opposed to guessing.
-        current_path = self._project_path()
+        # An explicit dropdown selection always wins over the IDE's own
+        # notion of "current" workspace - otherwise every re-scan would
+        # silently snap back to whatever get_workspace_path() reports,
+        # undoing the user's choice.
+        current_path = self._explicit_project_path or self._project_path()
         self.detector.project_path = current_path
         self.scan_path_label.setText(str(current_path))
 
