@@ -205,6 +205,99 @@ switching to the empty project's cluster name correctly showed the "no
 cluster reachable" message instead of the other project's stale pod
 list; switching back correctly showed the real pods again.
 
+## Part 6 — Pre-flight validation for empty k8s/terraform dirs — ✅ PASSED
+
+This part exists because "Deploy k8s/ Manifests" against an empty `k8s/`
+directory used to let kubectl's own cryptic error surface as-is (see
+gotcha in `HANDOVER.md`'s rough edges). `ProjectDetector.has_k8s_manifests()`
+and `has_terraform_files()` are the fix — non-recursive checks matching
+exactly what `kubectl apply -f <dir>` / `terraform` would actually pick
+up, not just "some file exists somewhere under here."
+
+1. Create an empty `k8s/` folder in a throwaway project (no `.yaml`/
+   `.yml` files in it at all).
+2. Select that project in the Active Project dropdown → Kubernetes tab →
+   click **Deploy k8s/ Manifests**.
+   - Expect: console shows `[!] <path> has no .yaml/.yml files in it -
+     nothing to deploy. Add a manifest there first, then try again.` —
+     **and no `kubectl apply` command is dispatched at all** (nothing
+     starts spinning, no `$ kubectl apply ...` line in the console).
+3. Copy `nginx-test.yaml` into that `k8s/` folder → click **Deploy k8s/
+   Manifests** again.
+   - Expect: this time it proceeds normally, same as Part 1.
+4. Point the Terraform directory field at an empty folder (no `.tf`
+   files).
+5. Click **Init** (or Plan).
+   - Expect: console shows a `[!] <path> has no .tf files in it - this
+     will run against an empty configuration (e.g. 'Plan: 0 to add'),
+     not an error.` line, **followed by the actual terraform command
+     still running** (this is a warning, not a block — Terraform itself
+     completes fine against zero resources, so don't expect it to stop).
+6. Point it back at `test-infra-project/terraform` (has `main.tf`) and
+   re-run Init/Plan.
+   - Expect: no warning line, normal output as in Part 3.
+
+**Confirmed working** — empty `k8s/` correctly blocked deploy with a
+clear message and no kubectl invocation; empty `terraform/` correctly
+warned without blocking; both reverted to normal behavior once real
+files were present.
+
+## Part 7 — Overview tab: "+ Create" scaffold buttons — ✅ PASSED
+
+Needs a project with none of `terraform/`, `helm/`, `k8s/` present yet -
+a fresh throwaway folder works (e.g. an empty `workspace-scaffold-test/`
+next to `test-infra-project/`).
+
+1. Select that empty project in the Active Project dropdown → Overview
+   tab.
+   - Expect: all three lines under "This Project's Infra Directories"
+     show "— not present in this project", and all four buttons below
+     (`+ terraform/`, `+ helm/`, `+ k8s/`, `➕ Create All Missing`) are
+     enabled.
+2. Click **+ k8s/**.
+   - Expect: console shows `[+] Created <path>/k8s`, the overview
+     re-scans automatically, the `k8s/` line flips to ✅ with the path,
+     and the `+ k8s/` button is now disabled (re-clicking would be a
+     no-op anyway, but it shouldn't even look clickable).
+   - Verify at the shell: `cat <path>/k8s/nginx-example.yaml` shows a
+     Deployment + Service manifest (`infra-plugin-example`), not an
+     empty file.
+3. Kubernetes tab → **Deploy k8s/ Manifests** (create a cluster first if
+   you don't have one) → **Refresh Pods**.
+   - Expect: this works exactly like Part 1, no "empty directory"
+     message from the Part 6 pre-flight check - the scaffolded manifest
+     is real, deployable content, not a placeholder.
+4. Click **+ terraform/**.
+   - Expect: same pattern - `[+] Created <path>/terraform`, ✅ shown,
+     button disables. `cat <path>/terraform/main.tf` shows the
+     `local_file.example` resource.
+5. Terraform tab → **Init** → **Plan** → **Apply**.
+   - Expect: same as Part 3 - `Plan: 1 to add`, `Apply complete!
+     Resources: 1 added`, and `example-output.txt` actually appears
+     under `terraform/`. Not the Part 6 "empty configuration" warning.
+6. Click **+ helm/**.
+   - Expect: `[+] Created <path>/helm`, ✅ shown, button disables. The
+     directory is empty (`ls <path>/helm` shows nothing) - this is
+     expected, there's no Helm tab yet to scaffold a chart into it.
+7. With all three now present, confirm **➕ Create All Missing** is
+   disabled (nothing left to create).
+8. On a *different*, still-empty project, click **➕ Create All Missing**
+   directly (skip the individual buttons).
+   - Expect: all three directories + their starter files appear in one
+     shot, console shows three `[+] Created ...` lines, and all four
+     buttons disable together.
+9. Re-click any already-enabled-then-disabled button once more just to
+   be sure.
+   - Expect: since it's already disabled you can't actually click it,
+     confirming step 2/4/6's disabling is real and not just visual.
+
+**Confirmed working** — each button creates exactly its own directory
+(never touching the other two), terraform/k8s starters are real
+deployable/applyable content (not empty placeholders), helm/ is
+correctly left empty, buttons correctly disable per-directory as each
+is created, and "Create All Missing" correctly creates only what's
+still missing.
+
 ---
 
 ## After testing

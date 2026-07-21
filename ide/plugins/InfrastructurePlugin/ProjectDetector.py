@@ -27,6 +27,59 @@ K8S_HINTS = ["k8s", "kubernetes", "manifests"]
 KUBERNETES_RUNTIMES = ["k3d", "kind", "minikube", "microk8s"]
 OTHER_TOOLS = ["kubectl", "terraform", "helm", "docker", "podman"]
 
+# Starter content written by scaffold() when the Overview tab's "+ Create"
+# buttons make a missing directory. Both are real, runnable examples -
+# safe and fully disposable - so a brand-new project can go straight to
+# Init -> Plan -> Apply or Deploy -> Refresh Pods without first having to
+# hand-write a file just to satisfy has_terraform_files()/has_k8s_manifests().
+# No cloud credentials, no external images beyond nginx:alpine.
+TERRAFORM_STARTER = '''# Starter Terraform configuration created by the Infrastructure plugin.
+# Safe to run immediately - this is a local-only example (no cloud
+# credentials needed) so you can try Init -> Plan -> Apply -> Destroy
+# right away. Replace it with your own resources when you're ready.
+
+resource "local_file" "example" {
+  filename = "${path.module}/example-output.txt"
+  content  = "Hello from the Infrastructure plugin!\\n"
+}
+'''
+
+K8S_STARTER = '''# Starter manifest created by the Infrastructure plugin.
+# Deploys a single disposable nginx pod + service so you can try
+# Deploy k8s/ Manifests -> Refresh Pods -> View Logs right away.
+# Replace it with your own manifests when you're ready.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infra-plugin-example
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: infra-plugin-example
+  template:
+    metadata:
+      labels:
+        app: infra-plugin-example
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infra-plugin-example
+spec:
+  selector:
+    app: infra-plugin-example
+  ports:
+    - port: 80
+      targetPort: 80
+'''
+
 
 class ProjectDetector:
     """Detects Terraform/Helm/Kubernetes content in a project and which
@@ -100,6 +153,89 @@ class ProjectDetector:
     # ------------------------------------------------------------------
     # Tool detection
     # ------------------------------------------------------------------
+
+    def scaffold(self, kind):
+        """
+        Creates the standard directory for `kind` in {'terraform', 'helm',
+        'k8s'} under this instance's project_path, if none of that kind's
+        hint-names already exists. terraform/k8s also get a real, runnable
+        starter file (see TERRAFORM_STARTER/K8S_STARTER above); helm/ is
+        left empty since there's no HelmManager yet to do anything with a
+        scaffolded chart.
+
+        This is filesystem-only (mkdir + write) - same cost class as the
+        rest of this module, no subprocess spawned - and it never
+        overwrites: if the directory (or the starter file inside it)
+        already exists, it's left completely untouched.
+
+        Returns the created directory Path, or None if there was nothing
+        to do (no project_path set, unknown `kind`, or that kind's
+        directory is already present under one of its hint names).
+        """
+        if not self.project_path:
+            return None
+        hints = {"terraform": TERRAFORM_HINTS, "helm": HELM_HINTS, "k8s": K8S_HINTS}.get(kind)
+        if hints is None:
+            return None
+        if self._find_dir(hints):
+            return None  # already present under some hint name - don't touch it
+
+        target = self.project_path / hints[0]
+        target.mkdir(parents=True, exist_ok=True)
+
+        starter = {
+            "terraform": ("main.tf", TERRAFORM_STARTER),
+            "k8s": ("nginx-example.yaml", K8S_STARTER),
+        }.get(kind)
+        if starter:
+            filename, content = starter
+            starter_path = target / filename
+            if not starter_path.exists():
+                starter_path.write_text(content, encoding="utf-8")
+
+        return target
+
+    @staticmethod
+    def has_terraform_files(directory):
+        """
+        True if `directory` contains at least one `.tf` file directly in
+        it. Non-recursive on purpose - `terraform init/plan/apply` only
+        read the working directory itself, not subfolders, so checking
+        deeper would give a false sense of "there's something here" for
+        a layout Terraform wouldn't actually pick up.
+
+        Note this is informational, not a hard gate: an empty Terraform
+        directory isn't actually an error - init/plan/apply all complete
+        fine against zero resources ("Plan: 0 to add"). Callers should
+        warn, not block.
+        """
+        if not directory:
+            return False
+        directory = Path(directory)
+        if not directory.is_dir():
+            return False
+        return any(directory.glob("*.tf"))
+
+    @staticmethod
+    def has_k8s_manifests(directory):
+        """
+        True if `directory` contains at least one `.yaml`/`.yml` file
+        directly in it. Non-recursive to match `kubectl apply -f <dir>`'s
+        own default behavior (no `-R`), so this reflects exactly what
+        kubectl would actually pick up, not just "some content exists
+        somewhere under here."
+
+        Unlike has_terraform_files, an empty result here IS a real
+        problem: `kubectl apply -f` on a directory with no manifests
+        fails outright ("error: no objects passed to apply"), it doesn't
+        gracefully no-op. Callers should block, not just warn.
+        """
+        if not directory:
+            return False
+        directory = Path(directory)
+        if not directory.is_dir():
+            return False
+        return any(directory.glob("*.yaml")) or any(directory.glob("*.yml"))
 
     @staticmethod
     def detect_tools():

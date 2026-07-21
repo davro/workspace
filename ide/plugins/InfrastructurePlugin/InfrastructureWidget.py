@@ -407,6 +407,35 @@ class InfrastructureWidget(QWidget):
         self.detect_label.setWordWrap(True)
         self.detect_label.setStyleSheet("color: #CCC; padding: 8px; background: #2D2D2D; border-radius: 5px;")
         detect_layout.addWidget(self.detect_label)
+
+        # "+ Create" buttons scaffold whichever directories aren't present
+        # yet (terraform/, helm/, k8s/ each get their own button, plus a
+        # catch-all). Each is disabled once its directory is detected -
+        # refresh_overview() below toggles these on every (re-)scan, so
+        # there's no "create it again" trap.
+        scaffold_row = QHBoxLayout()
+        self.scaffold_tf_btn = _button("+ terraform/")
+        self.scaffold_tf_btn.setToolTip("Create terraform/ with a runnable, local-only starter example")
+        self.scaffold_tf_btn.clicked.connect(lambda: self.scaffold_dir("terraform"))
+        scaffold_row.addWidget(self.scaffold_tf_btn)
+
+        self.scaffold_helm_btn = _button("+ helm/")
+        self.scaffold_helm_btn.setToolTip("Create an empty helm/ directory (no Helm tab wired up yet to scaffold a chart)")
+        self.scaffold_helm_btn.clicked.connect(lambda: self.scaffold_dir("helm"))
+        scaffold_row.addWidget(self.scaffold_helm_btn)
+
+        self.scaffold_k8s_btn = _button("+ k8s/")
+        self.scaffold_k8s_btn.setToolTip("Create k8s/ with a runnable, disposable nginx example")
+        self.scaffold_k8s_btn.clicked.connect(lambda: self.scaffold_dir("k8s"))
+        scaffold_row.addWidget(self.scaffold_k8s_btn)
+
+        scaffold_row.addStretch()
+
+        self.scaffold_all_btn = _button("\u2795 Create All Missing")
+        self.scaffold_all_btn.clicked.connect(self.scaffold_all_missing)
+        scaffold_row.addWidget(self.scaffold_all_btn)
+
+        detect_layout.addLayout(scaffold_row)
         layout.addWidget(detect_box)
 
         tools_box = _group("\U0001F527 Installed CLI Tools")
@@ -444,8 +473,17 @@ class InfrastructureWidget(QWidget):
         if not d["has_any"]:
             lines.append("")
             lines.append("This project has no terraform/, helm/, or k8s/ folder yet - "
-                          "the Kubernetes and Terraform tabs still work against any directory you point them at.")
+                          "the Kubernetes and Terraform tabs still work against any directory you point them "
+                          "at, or use the buttons below to scaffold one with a runnable starter example.")
         self.detect_label.setText("<br>".join(lines))
+
+        # Each button is only useful when its directory doesn't exist yet -
+        # disable it otherwise so there's no "create it again" trap, and
+        # no risk of it looking like it would overwrite something real.
+        self.scaffold_tf_btn.setEnabled(not d["terraform_dir"])
+        self.scaffold_helm_btn.setEnabled(not d["helm_dir"])
+        self.scaffold_k8s_btn.setEnabled(not d["k8s_dir"])
+        self.scaffold_all_btn.setEnabled(not (d["terraform_dir"] and d["helm_dir"] and d["k8s_dir"]))
 
         tool_lines = []
         for name, found in self.tools.items():
@@ -479,6 +517,38 @@ class InfrastructureWidget(QWidget):
             self.tf_dir_edit.setText(str(d["terraform_dir"]))
         if not self.cluster_name_edit.currentText():
             self.cluster_name_edit.setCurrentText(self.detector.default_cluster_name())
+
+    def scaffold_dir(self, kind):
+        """
+        Creates the missing terraform/helm/k8s directory (+ a runnable
+        starter file for terraform/k8s) for whichever project is
+        currently selected, then re-scans so the Overview tab and any
+        auto-filled fields (e.g. the Terraform directory box) pick it up
+        immediately. Filesystem-only, so there's no need to route this
+        through ProcessRunner or block on _busy - it's effectively
+        instant even on a slow disk.
+        """
+        self.detector.project_path = self._explicit_project_path or self._project_path()
+        created = self.detector.scaffold(kind)
+        if created:
+            self.log(f"[+] Created {created}")
+        else:
+            self.log(f"[!] {kind}/ already exists for this project (or nothing to scaffold) - not touching it.")
+        self.refresh_overview()
+
+    def scaffold_all_missing(self):
+        """Runs scaffold_dir() for every kind that isn't already present,
+        one re-scan at the end rather than one per directory."""
+        self.detector.project_path = self._explicit_project_path or self._project_path()
+        any_created = False
+        for kind in ("terraform", "helm", "k8s"):
+            created = self.detector.scaffold(kind)
+            if created:
+                self.log(f"[+] Created {created}")
+                any_created = True
+        if not any_created:
+            self.log("[!] Nothing to scaffold - terraform/, helm/, and k8s/ all already exist for this project.")
+        self.refresh_overview()
 
     # -- Kubernetes tab ---------------------------------------------------
 
@@ -616,6 +686,10 @@ class InfrastructureWidget(QWidget):
         if not k8s_dir:
             self.log("[!] No k8s/ manifests directory detected in this project.")
             return
+        if not ProjectDetector.has_k8s_manifests(k8s_dir):
+            self.log(f"[!] {k8s_dir} has no .yaml/.yml files in it - nothing to deploy. "
+                     f"Add a manifest there first, then try again.")
+            return
         if not self._daemon_ready():
             return
         cmd = KubernetesManager.apply_manifests_command(k8s_dir, context=self._current_cluster_context())
@@ -715,6 +789,9 @@ class InfrastructureWidget(QWidget):
         if not path.is_dir():
             self.log(f"[!] Not a directory: {path}")
             return None
+        if not ProjectDetector.has_terraform_files(path):
+            self.log(f"[!] {path} has no .tf files in it - this will run against an "
+                     f"empty configuration (e.g. 'Plan: 0 to add'), not an error.")
         return path
 
     def tf_init(self):

@@ -85,6 +85,28 @@ locking up on a slow `terraform apply`.
   first" instead of silently showing a different project's pods.
   Switching back to a project with a real running cluster correctly
   showed its actual pods again.
+- Pre-flight validation for empty k8s/terraform dirs — **confirmed
+  working**: `ProjectDetector.has_k8s_manifests()` / `has_terraform_files()`
+  do a non-recursive glob (`*.yaml`/`*.yml`, `*.tf`) matching exactly what
+  `kubectl apply -f <dir>` / `terraform` itself would pick up. Deploy k8s/
+  Manifests now hard-blocks with a clear console message and dispatches
+  no kubectl command at all against an empty `k8s/` dir (previously let
+  kubectl's own "no objects passed to apply" surface as-is). Terraform's
+  `_tf_dir()` only warns (doesn't block) on an empty `.tf` directory,
+  since `terraform init/plan/apply` complete fine against zero resources
+  — blocking there would be wrong, not just unnecessary. See TESTING.md
+  Part 6.
+- Overview tab scaffold buttons (`+ terraform/`, `+ helm/`, `+ k8s/`,
+  `➕ Create All Missing`) — **confirmed working**: `ProjectDetector.scaffold()`
+  creates the missing directory and, for terraform/k8s, a real runnable
+  starter file (`local_file.example` resource / an `infra-plugin-example`
+  nginx Deployment+Service) — not an empty placeholder, so Init→Apply and
+  Deploy→Refresh Pods work immediately against scaffolded content with no
+  Part 6 pre-flight warning/block in the way. helm/ is left empty (no
+  HelmManager yet to scaffold a chart into). Buttons correctly disable
+  per-directory as each is created, never overwrite existing content, and
+  "Create All Missing" only creates what's actually still missing. See
+  TESTING.md Part 7.
 
 Every path in the original TESTING.md checklist is now verified. If you
 add new actions (Helm tab, cluster dropdown, etc.), add a corresponding
@@ -347,12 +369,11 @@ From the original brainstorm, NOT implemented, on purpose:
   plugin is ever pointed at anything beyond local/disposable dev infra,
   reconsider whether auto-approve is still appropriate, or add a plan-
   preview step before the confirm dialog.
-- Terraform directory field auto-fills from detection but there's no
-  validation beyond "is it a directory" — no check that it actually
-  contains `.tf` files. Same gap on the Kubernetes side: Deploy k8s/
-  Manifests against an empty (no `.yaml` files) directory just errors
-  from kubectl rather than the plugin catching it with a clearer message
-  first (hit in practice, see gotcha #12's project for how this surfaced).
+- ~~Terraform directory field auto-fills from detection but there's no
+  validation beyond "is it a directory"~~ — **closed**: both directions
+  now check actual file contents (`has_terraform_files` / `has_k8s_manifests`
+  in `ProjectDetector`), with k8s hard-blocking and terraform only
+  warning (see "Pre-flight validation" above for why those differ).
 - Opening the panel now does several blocking checks in a row at load
   time (`docker info` for the daemon check, `kubectl get pods` for the
   pod list, `k3d cluster list` for the cluster combo) — all via the
@@ -377,9 +398,15 @@ From the original brainstorm, NOT implemented, on purpose:
 2. If load-time responsiveness becomes an actual complaint (see rough
    edge above), move the daemon check, pod refresh, and cluster-list
    fetch off the synchronous path.
-3. Consider a clearer pre-flight message for "Deploy k8s/ Manifests"
+3. ~~Consider a clearer pre-flight message for "Deploy k8s/ Manifests"
    when the target directory has no `.yaml`/`.yml` files, rather than
-   letting kubectl's own error surface as-is.
+   letting kubectl's own error surface as-is.~~ **Done** — see "Pre-flight
+   validation" above and TESTING.md Part 6. Note the intentional
+   asymmetry if you extend this further: k8s is a hard block (kubectl
+   genuinely errors on an empty dir), terraform is a soft warning only
+   (terraform genuinely doesn't error - "0 to add" is a valid, successful
+   outcome). Don't make terraform block too; that would change real
+   behavior for a case that isn't actually broken.
 4. Consider whether the cluster-list dropdown should filter/suggest
    clusters matching the currently selected project's naming convention,
    given the "two dropdowns don't talk to each other" rough edge above -
