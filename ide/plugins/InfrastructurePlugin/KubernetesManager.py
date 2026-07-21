@@ -83,22 +83,37 @@ class KubernetesManager:
         return f"k3d-{cluster_name}"
 
     @staticmethod
-    def apply_manifests_command(path):
-        return ["kubectl", "apply", "-f", str(path)]
+    def apply_manifests_command(path, context=None):
+        cmd = ["kubectl"]
+        if context:
+            cmd += ["--context", context]
+        cmd += ["apply", "-f", str(path)]
+        return cmd
 
     @staticmethod
-    def get_pods_command(namespace=None):
-        cmd = ["kubectl", "get", "pods", "-o", "wide"]
+    def get_pods_command(namespace=None, context=None):
+        cmd = ["kubectl"]
+        if context:
+            cmd += ["--context", context]
+        cmd += ["get", "pods", "-o", "wide"]
         cmd += ["--all-namespaces"] if not namespace else ["-n", namespace]
         return cmd
 
     @staticmethod
-    def get_pod_logs_command(pod_name, namespace="default", tail=200):
-        return ["kubectl", "logs", pod_name, "-n", namespace, f"--tail={tail}"]
+    def get_pod_logs_command(pod_name, namespace="default", tail=200, context=None):
+        cmd = ["kubectl"]
+        if context:
+            cmd += ["--context", context]
+        cmd += ["logs", pod_name, "-n", namespace, f"--tail={tail}"]
+        return cmd
 
     @staticmethod
-    def describe_pod_command(pod_name, namespace="default"):
-        return ["kubectl", "describe", "pod", pod_name, "-n", namespace]
+    def describe_pod_command(pod_name, namespace="default", context=None):
+        cmd = ["kubectl"]
+        if context:
+            cmd += ["--context", context]
+        cmd += ["describe", "pod", pod_name, "-n", namespace]
+        return cmd
 
     @staticmethod
     def current_context_command():

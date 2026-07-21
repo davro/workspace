@@ -1,12 +1,14 @@
 # HANDOVER — Infrastructure Plugin (Workspace IDE)
 
 Status as of this update: **fully verified end-to-end on a real machine,
-including the whole TESTING.md checklist**, PLUS a new multi-project
-feature (Active Project dropdown) verified against two real, separate
-projects with isolated clusters — see "Active Project dropdown" below.
-A QThread crash was found and fixed along the way (see gotcha #8) — read
-that one before touching `ProcessRunner` or `InfrastructureWidget`'s
-threading.
+including the whole TESTING.md checklist**, PLUS multi-project support
+(Active Project dropdown) and a per-project cluster-list dropdown, both
+verified against two real projects. A significant bug was found and
+fixed in this session: **Kubernetes actions (Refresh Pods/Deploy/Logs)
+were not actually scoped to the selected project's cluster** — see
+gotcha #12, read it before touching anything in the Kubernetes tab. A
+QThread crash was also found and fixed earlier (gotcha #8) — read that
+one before touching `ProcessRunner` or `InfrastructureWidget`'s threading.
 
 ---
 
@@ -72,6 +74,17 @@ locking up on a slow `terraform apply`.
   validate (`Success!`) → fmt → plan (`1 to add`) → apply (`1 added`,
   file confirmed on disk via `cat`) → destroy (`1 destroyed`, file
   confirmed GONE via `cat` afterward — not just a "reported success").
+- Cluster-list dropdown (cluster name field is now an editable combo,
+  see gotcha #12 for the bigger fix that came with it) — **confirmed
+  working**: existing clusters (`workspace-infrastructure`) showed up
+  correctly in the dropdown, selecting one and hitting Delete Cluster
+  round-tripped the selected value into the k3d command correctly.
+- Context-scoping fix (gotcha #12) — **confirmed working**: selecting an
+  empty/not-yet-created project's cluster name and clicking Refresh Pods
+  now correctly shows "No cluster named 'k3d-...' reachable - create one
+  first" instead of silently showing a different project's pods.
+  Switching back to a project with a real running cluster correctly
+  showed its actual pods again.
 
 Every path in the original TESTING.md checklist is now verified. If you
 add new actions (Helm tab, cluster dropdown, etc.), add a corresponding
@@ -248,6 +261,48 @@ whatever the IDE considers the single "current" workspace.
     old single-project fallback instead of crashing the whole panel -
     don't remove that defensiveness to "clean up" the code.
 
+12. **Kubernetes actions were not actually scoped to the selected
+    project's cluster - a real, significant bug, not cosmetic.** Hit in
+    real use: with two projects (`workspace-infrastructure`, cluster
+    running with nginx deployed, and `workspace-infrastructure-complex`,
+    no cluster yet), switching the Active Project dropdown to the empty
+    one and clicking Refresh Pods still showed the FIRST project's nginx
+    pod. Root cause: `refresh_pods()`, `deploy_manifests()`, and
+    `view_pod_logs()` all called kubectl with no `--context` flag, so
+    they silently used whatever kubectl's ambient `current-context`
+    happened to be - which only changes when k3d's own `cluster create`
+    switches it, NOT when the Active Project dropdown changes. The
+    dropdown was only ever affecting directory detection and field
+    defaults, never actually re-targeting which cluster commands hit.
+    Fix (now in place, don't undo):
+    - Every kubectl command builder in `KubernetesManager`
+      (`apply_manifests_command`, `get_pods_command`,
+      `get_pod_logs_command`, `describe_pod_command`) now takes an
+      optional `context` param and prepends `--context <name>`.
+    - New `InfrastructureWidget._current_cluster_context()` derives the
+      expected context (`k3d-<name>`) from whatever's currently in the
+      cluster name combo box, and `deploy_manifests()`/`refresh_pods()`/
+      `view_pod_logs()` all pass it through explicitly now instead of
+      relying on the ambient context.
+    - If the resulting context doesn't exist yet (cluster not created),
+      kubectl fails fast and `refresh_pods()` shows a specific message
+      naming the missing context, instead of silently falling back to
+      whatever was last active.
+    If you add any new kubectl-calling action, thread `context` through
+    it the same way - do NOT let a new action skip this and quietly
+    reintroduce the "wrong project's data shown" bug.
+
+13. **Cluster name field auto-refresh is wired to `activated` +
+    `editingFinished`, deliberately NOT `currentTextChanged`.**
+    `currentTextChanged` fires on every keystroke in an editable combo
+    box - connecting `refresh_pods()` (a blocking call, up to 8s) to that
+    would freeze the UI while typing a new cluster name one character at
+    a time. `activated` fires when an existing item is picked from the
+    dropdown; `editingFinished` fires when typed text is committed
+    (Enter or focus loss). `_on_cluster_name_changed()` also de-dupes
+    against `_last_refreshed_cluster_name` since both signals can fire
+    without the value actually changing.
+
 ## `test-infra-project/` — keep or discard, your call
 
 A throwaway project (delivered alongside this plugin) with a minimal
@@ -292,38 +347,41 @@ From the original brainstorm, NOT implemented, on purpose:
   plugin is ever pointed at anything beyond local/disposable dev infra,
   reconsider whether auto-approve is still appropriate, or add a plan-
   preview step before the confirm dialog.
-- No handling yet for multiple CLUSTERS existing simultaneously per
-  project beyond what's in the single `cluster_name_edit` field — note
-  this is distinct from the multi-PROJECT support above (which is done).
-  `k3d cluster list` is wired in `KubernetesManager.list_clusters_command()`
-  but nothing in the widget surfaces it yet (e.g. a dropdown of existing
-  clusters for whichever project is currently selected).
 - Terraform directory field auto-fills from detection but there's no
   validation beyond "is it a directory" — no check that it actually
   contains `.tf` files. Same gap on the Kubernetes side: Deploy k8s/
   Manifests against an empty (no `.yaml` files) directory just errors
   from kubectl rather than the plugin catching it with a clearer message
-  first (hit in practice - see Active Project dropdown section above).
-- Opening the panel now does two blocking checks in a row at load time
-  (`docker info` for the daemon check, `kubectl get pods` for the pod
-  list) — both via the synchronous `run_quick()`, each with its own
-  timeout (5s / 8s). On a slow machine or unreachable daemon this could
-  add a few seconds of pause when the panel first opens. Not yet reported
-  as an actual problem, but if it ever is, the fix is moving these onto
-  a background thread rather than synchronous calls.
+  first (hit in practice, see gotcha #12's project for how this surfaced).
+- Opening the panel now does several blocking checks in a row at load
+  time (`docker info` for the daemon check, `kubectl get pods` for the
+  pod list, `k3d cluster list` for the cluster combo) — all via the
+  synchronous `run_quick()`, each with its own short timeout. On a slow
+  machine or unreachable daemon this could add a few seconds of pause
+  when the panel first opens or a project/tab is switched. Not yet
+  reported as an actual problem, but if it ever is, the fix is moving
+  these onto a background thread rather than synchronous calls.
+- The cluster-list dropdown (see gotcha #12/13) is intentionally a
+  GLOBAL list of every k3d cluster on the machine, not filtered by
+  project — there's no enforced link between a cluster and the project
+  that created it beyond the `workspace-<project>` naming suggestion.
+  Nothing stops someone selecting an unrelated cluster while a different
+  project is active in the Active Project dropdown. Not a bug exactly -
+  more a "the two dropdowns don't talk to each other" gap worth knowing.
 
 ## Suggested next steps (not started)
 
-1. Consider a per-project cluster-list dropdown (see rough edge above)
-   instead of a free-text name field, using the already-built
-   `list_clusters_command()` / `parse_cluster_list()` — natural
-   follow-on now that the Active Project dropdown exists.
-2. If Helm support becomes a real need: add `HelmManager.py` following
+1. If Helm support becomes a real need: add `HelmManager.py` following
    the exact pattern of `TerraformManager.py`, plus a Helm tab in the
    widget — don't restructure anything else.
-3. If load-time responsiveness becomes an actual complaint (see rough
-   edge above), move the daemon check and pod refresh off the
-   synchronous path.
-4. Consider a clearer pre-flight message for "Deploy k8s/ Manifests"
+2. If load-time responsiveness becomes an actual complaint (see rough
+   edge above), move the daemon check, pod refresh, and cluster-list
+   fetch off the synchronous path.
+3. Consider a clearer pre-flight message for "Deploy k8s/ Manifests"
    when the target directory has no `.yaml`/`.yml` files, rather than
    letting kubectl's own error surface as-is.
+4. Consider whether the cluster-list dropdown should filter/suggest
+   clusters matching the currently selected project's naming convention,
+   given the "two dropdowns don't talk to each other" rough edge above -
+   weigh this against the deliberate choice to show everything honestly
+   rather than hide a cluster behind a naming guess.

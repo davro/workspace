@@ -1,6 +1,6 @@
 # TESTING.md — Infrastructure Plugin manual test checklist
 
-Status: **all four parts below have passed at least once**, on a real
+Status: **all five parts below have passed at least once**, on a real
 machine, against real infrastructure (not just "the code runs"). Keep
 this as a regression checklist going forward — after touching anything
 in `InfrastructureWidget.py`, `KubernetesManager.py`, `TerraformManager.py`,
@@ -152,13 +152,69 @@ project with its own `terraform/`/`helm`/`k8s/` folders; deployment,
 cluster, and HTTP traffic all confirmed isolated per-project, including
 a real browser screenshot of the second project's nginx page.
 
+## Part 5 — Cluster-list dropdown + context-scoping fix — ✅ PASSED
+
+This part exists specifically because Part 4 above initially *looked*
+like it worked but actually had a real bug hiding underneath: Kubernetes
+actions were not scoped to whichever project was selected, they just hit
+kubectl's ambient current-context. See `HANDOVER.md` gotcha #12 for the
+full story. This checklist section is the regression test for that fix
+— if it ever fails again, that bug is back.
+
+Needs two projects again, one with a running cluster + deployed workload
+(e.g. `test-infra-project` from Parts 1-3), one WITHOUT a cluster created
+yet (create a fresh throwaway project, or delete a previous test
+project's cluster first).
+
+1. Select the project WITH a running cluster in the Active Project
+   dropdown. Go to the Kubernetes tab.
+   - Expect: the cluster name combo box shows that project's cluster
+     name, either pre-selected or available in the dropdown list.
+2. Click the small 🔄 refresh button next to the cluster name combo.
+   - Expect: the dropdown lists every k3d cluster currently on the
+     machine (this is deliberately global, not project-filtered — see
+     `HANDOVER.md` rough edges).
+3. Click Refresh Pods.
+   - Expect: pods for THIS project's cluster (e.g. the nginx deployment
+     from Part 1), matching what you'd see running
+     `kubectl --context k3d-<name> get pods` directly.
+4. Switch the Active Project dropdown to the project WITHOUT a cluster.
+   - Expect: cluster name combo re-autofills to that project's expected
+     name.
+5. Click Refresh Pods again (or just wait for the auto-refresh from
+   switching cluster name).
+   - **This is the actual regression check.** Expect: "No cluster named
+     'k3d-<name>' reachable - create one first" — NOT the previous
+     project's pods still showing. If you see the previous project's
+     pods here, the context-scoping fix has regressed.
+6. Manually type a cluster name into the combo box that doesn't exist
+   yet, then press Enter (or click away to trigger editingFinished).
+   - Expect: Refresh Pods fires automatically (no manual click needed),
+     and shows the same "No cluster named ... reachable" message for
+     that typed name.
+7. Switch the Active Project dropdown back to the project WITH the
+   running cluster.
+   - Expect: cluster name combo reverts, and either an automatic refresh
+     or a manual Refresh Pods click correctly shows that project's real
+     pods again — confirming the fix works in both directions, not just
+     "empty cluster shows empty."
+
+**Confirmed working** — tested with `workspace-infrastructure` (running,
+nginx deployed) and `workspace-infrastructure-complex` (no cluster yet):
+switching to the empty project's cluster name correctly showed the "no
+cluster reachable" message instead of the other project's stale pod
+list; switching back correctly showed the real pods again.
+
 ---
 
 ## After testing
 
-All four parts above have passed. If you add a new action (Helm tab,
-cluster-list dropdown, etc.), add a new "Part N" section here following
-the same pattern: concrete expected output at each step, and at least
-one "assert the real-world side effect" check (a `cat`, a `curl`, a
-`docker ps`) rather than trusting console text alone. Then update
-`HANDOVER.md`'s "Verified working" section to match.
+All five parts above have passed. If you add a new action (Helm tab,
+etc.), add a new "Part N" section here following the same pattern:
+concrete expected output at each step, and at least one "assert the
+real-world side effect" check (a `cat`, a `curl`, a `docker ps`) rather
+than trusting console text alone. If the new action touches kubectl at
+all, make sure it's scoped with `--context` the same way Part 5 checks
+for — that bug class is exactly the kind that's easy to reintroduce by
+adding a new action that forgets to thread the context through. Then
+update `HANDOVER.md`'s "Verified working" section to match.

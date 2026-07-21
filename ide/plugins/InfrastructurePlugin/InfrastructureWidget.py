@@ -166,9 +166,13 @@ class InfrastructureWidget(QWidget):
         self._explicit_project_path = Path(data)
         # Switching projects should re-autofill the cluster name and
         # Terraform directory for the NEW project, not keep whatever was
-        # typed for the previous one.
-        self.cluster_name_edit.clear()
+        # typed/selected for the previous one. clearEditText() (not
+        # clear()!) - clear() on a QComboBox wipes its whole item list,
+        # which would blow away the cluster dropdown's contents instead
+        # of just resetting the current selection/typed text.
+        self.cluster_name_edit.clearEditText()
         self.tf_dir_edit.clear()
+        self._populate_cluster_list()
         if refresh:
             self.refresh_overview()
 
@@ -187,6 +191,40 @@ class InfrastructureWidget(QWidget):
             self.refresh_overview()
         elif index == 1:
             self.refresh_pods()
+            self._populate_cluster_list()
+
+    def _populate_cluster_list(self):
+        """
+        Populates the cluster name combo from `k3d cluster list`. This is
+        a GLOBAL list of every k3d cluster on the machine, not scoped to
+        the currently selected project - the plugin has no reliable way
+        to know which cluster "belongs" to which project beyond the
+        `workspace-<project>` naming convention it suggests but doesn't
+        enforce (nothing stops someone naming a cluster anything they
+        like). Showing everything and letting the user pick an existing
+        one, or type a brand new name to create one, is the honest option
+        rather than guessing at a filter that could hide a cluster they
+        actually want.
+
+        Cheap enough to call on tab switch / project switch / after
+        create-delete - `k3d cluster list` normally returns in well under
+        a second, same class of call as the daemon check.
+        """
+        current_text = self.cluster_name_edit.currentText()
+        self.cluster_name_edit.blockSignals(True)
+        self.cluster_name_edit.clear()
+
+        if self.tools.get("k3d"):
+            code, output = run_quick(KubernetesManager.list_clusters_command(), timeout=5)
+            if code == 0:
+                for c in KubernetesManager.parse_cluster_list(output):
+                    self.cluster_name_edit.addItem(c["name"])
+
+        # Restore whatever was typed/selected before repopulating - this
+        # is what lets a user keep typing a brand-new cluster name across
+        # a background refresh instead of having it wiped out from under them.
+        self.cluster_name_edit.setEditText(current_text)
+        self.cluster_name_edit.blockSignals(False)
 
     def _busy(self, is_busy):
         """Disable action buttons while a command is running so two
@@ -439,8 +477,8 @@ class InfrastructureWidget(QWidget):
         # Pre-fill terraform directory and cluster name if not already edited
         if d["terraform_dir"] and not self.tf_dir_edit.text():
             self.tf_dir_edit.setText(str(d["terraform_dir"]))
-        if not self.cluster_name_edit.text():
-            self.cluster_name_edit.setText(self.detector.default_cluster_name())
+        if not self.cluster_name_edit.currentText():
+            self.cluster_name_edit.setCurrentText(self.detector.default_cluster_name())
 
     # -- Kubernetes tab ---------------------------------------------------
 
@@ -453,8 +491,18 @@ class InfrastructureWidget(QWidget):
 
         name_row = QHBoxLayout()
         name_row.addWidget(QLabel("Cluster name:"))
-        self.cluster_name_edit = QLineEdit()
-        name_row.addWidget(self.cluster_name_edit)
+        self.cluster_name_edit = QComboBox()
+        self.cluster_name_edit.setEditable(True)
+        self.cluster_name_edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.cluster_name_edit.setToolTip(
+            "Pick an existing k3d cluster, or type a new name to create one."
+        )
+        name_row.addWidget(self.cluster_name_edit, stretch=1)
+        cluster_refresh_btn = _button("\U0001F504")
+        cluster_refresh_btn.setToolTip("Reload the list of existing k3d clusters")
+        cluster_refresh_btn.setFixedWidth(40)
+        cluster_refresh_btn.clicked.connect(self._populate_cluster_list)
+        name_row.addWidget(cluster_refresh_btn)
         name_row.addWidget(QLabel("Extra agents:"))
         self.agents_spin = QSpinBox()
         self.agents_spin.setRange(0, 5)
@@ -501,7 +549,7 @@ class InfrastructureWidget(QWidget):
         return widget
 
     def create_cluster(self):
-        name = self.cluster_name_edit.text().strip()
+        name = self.cluster_name_edit.currentText().strip()
         if not name:
             self.log("[!] Enter a cluster name first.")
             return
@@ -517,11 +565,12 @@ class InfrastructureWidget(QWidget):
             if code == 0:
                 self.api.show_status_message(f"Cluster '{name}' created", 3000)
                 self.log(f"kubectl context switched to k3d-{name} automatically.")
+                self._populate_cluster_list()
 
         self.run_command(cmd, label=f"create cluster {name}", on_finished=done)
 
     def delete_cluster(self):
-        name = self.cluster_name_edit.text().strip()
+        name = self.cluster_name_edit.currentText().strip()
         if not name:
             self.log("[!] Enter a cluster name first.")
             return
@@ -535,8 +584,32 @@ class InfrastructureWidget(QWidget):
         def done(code):
             if code == 0:
                 self.api.show_status_message(f"Cluster '{name}' deleted", 3000)
+                self._populate_cluster_list()
 
         self.run_command(cmd, label=f"delete cluster {name}", on_finished=done)
+
+    def _current_cluster_context(self):
+        """
+        Returns the kubectl context matching whatever cluster name is
+        currently shown in the Kubernetes tab's combo box, or None if
+        it's empty.
+
+        Without this, every kubectl call below would hit whatever
+        context happened to be ambient (kubectl's own "current-context"),
+        which is NOT the same thing as "the cluster for the currently
+        selected project." k3d switches the ambient context on Create,
+        but nothing switches it back when you just change the Active
+        Project dropdown - so refreshing pods after switching to a
+        different (or not-yet-created) project's cluster would silently
+        keep showing the PREVIOUS project's pods instead of erroring or
+        showing nothing. Scoping every call with --context ties each
+        action to the cluster name actually on screen, not whatever was
+        left over from the last Create Cluster click.
+        """
+        name = self.cluster_name_edit.currentText().strip()
+        if not name:
+            return None
+        return KubernetesManager.kube_context_name(name)
 
     def deploy_manifests(self):
         k8s_dir = self.detection.get("k8s_dir")
@@ -545,7 +618,7 @@ class InfrastructureWidget(QWidget):
             return
         if not self._daemon_ready():
             return
-        cmd = KubernetesManager.apply_manifests_command(k8s_dir)
+        cmd = KubernetesManager.apply_manifests_command(k8s_dir, context=self._current_cluster_context())
         self.run_command(cmd, label="deploy manifests", on_finished=lambda c: self.refresh_pods())
 
     def refresh_pods(self):
@@ -556,10 +629,12 @@ class InfrastructureWidget(QWidget):
             self.pods_list.clear()
             self.pods_list.addItem("Container daemon not running - see console")
             return
-        code, output = run_quick(KubernetesManager.get_pods_command(), timeout=8)
+        context = self._current_cluster_context()
+        code, output = run_quick(KubernetesManager.get_pods_command(context=context), timeout=8)
         self.pods_list.clear()
         if code != 0:
-            self.pods_list.addItem("No cluster reachable - create one first")
+            label = f"No cluster named '{context}' reachable" if context else "No cluster reachable"
+            self.pods_list.addItem(f"{label} - create one first")
             return
         lines = output.splitlines()
         if len(lines) <= 1:
@@ -577,7 +652,9 @@ class InfrastructureWidget(QWidget):
         if len(parts) < 2:
             return
         namespace, pod_name = parts[0], parts[1]
-        cmd = KubernetesManager.get_pod_logs_command(pod_name, namespace=namespace)
+        cmd = KubernetesManager.get_pod_logs_command(
+            pod_name, namespace=namespace, context=self._current_cluster_context()
+        )
         self.run_command(cmd, label=f"logs {pod_name}")
 
     # -- Terraform tab ---------------------------------------------------
