@@ -15,9 +15,9 @@ one before touching `ProcessRunner` or `InfrastructureWidget`'s threading.
 ## What this is
 
 A Workspace IDE plugin for local, disposable infrastructure workflows:
-k3d (Kubernetes-in-Docker) clusters + Terraform, driven from a panel in
-the right sidebar. Originated from a much broader brainstorm doc
-(multi-runtime Kubernetes, Helm, Ansible, local registry, a Tilt/Skaffold-
+k3d (Kubernetes-in-Docker) clusters + Terraform + Helm, driven from a
+panel in the right sidebar. Originated from a much broader brainstorm
+doc (multi-runtime Kubernetes, Ansible, local registry, a Tilt/Skaffold-
 style "Develop" loop) that was deliberately scoped WAY down for a laptop /
 small dev server. See "Deliberately cut from scope" below before adding
 any of that back — it was cut for reasons, not by accident.
@@ -30,20 +30,22 @@ ide/plugins/InfrastructurePlugin/
 ├── __init__.py
 ├── install.sh                                # system dependency installer (see below)
 ├── ProcessRunner.py                           # QThread command runner + run_quick() sync helper
-├── ProjectDetector.py                         # terraform/helm/k8s detection, tool + daemon checks
+├── ProjectDetector.py                         # terraform/helm/k8s detection, tool + daemon checks, scaffold()
 ├── KubernetesManager.py                       # k3d + kubectl command builders (argv lists only)
 ├── TerraformManager.py                        # terraform command builders (argv lists only)
+├── HelmManager.py                             # helm command builders (argv lists only) - new, unverified
 ├── InfrastructureWidget.py                    # the UI — tabs + shared console
 └── HANDOVER.md                                # this file
 README.md (repo root, from the same delivery) # user-facing install/usage doc
 ```
 
-`KubernetesManager` and `TerraformManager` never call `subprocess` directly
-— they only build argv lists. Every actual execution goes through
-`ProcessRunner` (async, streams to console) or `run_quick()` (sync, for
-fast checks like `docker info` or `kubectl get pods`, <10s timeout). Keep
-this separation if you extend it — it's what keeps the UI thread from
-locking up on a slow `terraform apply`.
+`KubernetesManager`, `TerraformManager`, and `HelmManager` never call
+`subprocess` directly — they only build argv lists. Every actual
+execution goes through `ProcessRunner` (async, streams to console) or
+`run_quick()` (sync, for fast checks like `docker info` or `kubectl get
+pods`, <10s timeout). Keep this separation if you extend it — it's what
+keeps the UI thread from locking up on a slow `terraform apply` (or
+`helm install`).
 
 ## Verified working (manually, by the user, on their own machine)
 
@@ -85,31 +87,53 @@ locking up on a slow `terraform apply`.
   first" instead of silently showing a different project's pods.
   Switching back to a project with a real running cluster correctly
   showed its actual pods again.
-- Pre-flight validation for empty k8s/terraform dirs — **confirmed
-  working**: `ProjectDetector.has_k8s_manifests()` / `has_terraform_files()`
-  do a non-recursive glob (`*.yaml`/`*.yml`, `*.tf`) matching exactly what
-  `kubectl apply -f <dir>` / `terraform` itself would pick up. Deploy k8s/
-  Manifests now hard-blocks with a clear console message and dispatches
-  no kubectl command at all against an empty `k8s/` dir (previously let
-  kubectl's own "no objects passed to apply" surface as-is). Terraform's
-  `_tf_dir()` only warns (doesn't block) on an empty `.tf` directory,
-  since `terraform init/plan/apply` complete fine against zero resources
-  — blocking there would be wrong, not just unnecessary. See TESTING.md
-  Part 6.
-- Overview tab scaffold buttons (`+ terraform/`, `+ helm/`, `+ k8s/`,
-  `➕ Create All Missing`) — **confirmed working**: `ProjectDetector.scaffold()`
-  creates the missing directory and, for terraform/k8s, a real runnable
-  starter file (`local_file.example` resource / an `infra-plugin-example`
-  nginx Deployment+Service) — not an empty placeholder, so Init→Apply and
-  Deploy→Refresh Pods work immediately against scaffolded content with no
-  Part 6 pre-flight warning/block in the way. helm/ is left empty (no
-  HelmManager yet to scaffold a chart into). Buttons correctly disable
-  per-directory as each is created, never overwrite existing content, and
-  "Create All Missing" only creates what's actually still missing. See
-  TESTING.md Part 7.
 
-Every path in the original TESTING.md checklist is now verified. If you
-add new actions (Helm tab, cluster dropdown, etc.), add a corresponding
+## Built but only logic-tested so far (not yet confirmed on the real machine)
+
+Being straight about this: everything below was written and exercised
+against plain-Python unit-style checks in a sandbox with no PyQt6, no
+`terraform`/`helm`/`kubectl` binaries, and no real Workspace IDE - not
+the "confirmed working... on a real machine" bar the rest of this doc
+holds itself to. Don't copy the wording pattern above onto these until
+TESTING.md's Parts 6-8 have actually been run.
+
+- Pre-flight validation for empty k8s/terraform dirs —
+  `ProjectDetector.has_k8s_manifests()` / `has_terraform_files()` do a
+  non-recursive glob (`*.yaml`/`*.yml`, `*.tf`) matching exactly what
+  `kubectl apply -f <dir>` / `terraform` itself would pick up, and were
+  confirmed correct against real temp directories in a plain script.
+  Deploy k8s/ Manifests should hard-block with a clear console message
+  and dispatch no kubectl command at all against an empty `k8s/` dir;
+  Terraform's `_tf_dir()` should only warn (not block) on an empty
+  `.tf` directory. Neither has actually been clicked through in the
+  real IDE yet. See TESTING.md Part 6.
+- Overview tab scaffold buttons (`+ terraform/`, `+ helm/`, `+ k8s/`,
+  `➕ Create All Missing`) — **partially confirmed**: you've verified for
+  real that clicking these creates the actual directory and starter
+  file (`terraform/main.tf`, `k8s/nginx-example.yaml`) on disk. Still
+  open: actually deploying/applying the scaffolded content through the
+  UI, confirming the buttons visually disable once their directory
+  exists, and "Create All Missing" on a second project. See TESTING.md
+  Part 7.
+- **Helm tab (new, entirely unverified)** — `HelmManager.py` (argv
+  builders for `helm create/upgrade --install/uninstall/list -o json/
+  lint/template`, all `--kube-context`-scoped the same way
+  `KubernetesManager` is) plus a full Helm tab in the widget: a chart
+  directory field (validated the same hard-block way as k8s - missing
+  `Chart.yaml` stops the action with a clear message instead of
+  Helm's own error), a "+ helm create" button that runs Helm's actual
+  scaffold generator (not a hand-rolled starter, unlike terraform/k8s),
+  Install/Upgrade using `upgrade --install` so a second click upgrades
+  in place instead of erroring "name already in use", Uninstall (with
+  confirm dialog), and a Releases list populated via `helm list -o json`.
+  `install.sh` now installs `helm` too. **None of this has been run
+  against a real cluster.** See TESTING.md Part 8 for the full
+  click-through - do that before treating any of it as working.
+
+Every path in the original five-part TESTING.md checklist is verified.
+The three items just above are not yet - they're new, and only as good
+as their sandbox-level testing until proven otherwise on your machine.
+If you add further new actions beyond these, add a corresponding
 section to TESTING.md and follow the same "assert the real-world side
 effect, not just the console output" pattern used above (e.g. `cat`-ing
 the file that was supposedly created/destroyed).
@@ -348,9 +372,9 @@ From the original brainstorm, NOT implemented, on purpose:
   comes up, `KubernetesManager` would need a `runtime` parameter threaded
   through its command builders, plus a runtime selector in the widget —
   not a huge lift, just not done yet.
-- **Helm** — no Helm tab. `kubectl apply -f k8s/` covers the deploy loop
-  without another CLI dependency. Would need a `HelmManager` following
-  the same argv-builder pattern.
+- **Helm** — ~~no Helm tab~~ **added, see "Helm tab (new, unverified)"
+  below** - `HelmManager.py` now exists following the same argv-builder
+  pattern as `TerraformManager`.
 - **Ansible** — not touched at all.
 - **Local image registry** — implies a permanently-running registry
   container. Explicitly avoided to keep this "on-demand action" rather
@@ -392,9 +416,11 @@ From the original brainstorm, NOT implemented, on purpose:
 
 ## Suggested next steps (not started)
 
-1. If Helm support becomes a real need: add `HelmManager.py` following
-   the exact pattern of `TerraformManager.py`, plus a Helm tab in the
-   widget — don't restructure anything else.
+1. ~~If Helm support becomes a real need: add `HelmManager.py`...~~ **Done**
+   - see "Helm tab (new, unverified)" below. This is genuinely
+   unverified though (no real machine, no PyQt6/helm binary in the
+   sandbox it was written in) - run TESTING.md Part 8 before trusting
+   it.
 2. If load-time responsiveness becomes an actual complaint (see rough
    edge above), move the daemon check, pod refresh, and cluster-list
    fetch off the synchronous path.

@@ -8,3 +8,4 @@ Components:
 from .KubernetesManager import KubernetesManager
 from .ProcessRunner import ProcessRunner
 from .TerraformManager import TerraformManager
+from .HelmManager import HelmManager

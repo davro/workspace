@@ -23,6 +23,7 @@ from InfrastructurePlugin.ProcessRunner import ProcessRunner, run_quick
 from InfrastructurePlugin.ProjectDetector import ProjectDetector
 from InfrastructurePlugin.KubernetesManager import KubernetesManager
 from InfrastructurePlugin.TerraformManager import TerraformManager
+from InfrastructurePlugin.HelmManager import HelmManager
 
 
 def _button(text):
@@ -69,6 +70,7 @@ class InfrastructureWidget(QWidget):
         self._populate_project_combo()
         self.refresh_overview()
         self.refresh_pods()
+        self.refresh_helm_releases()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -185,13 +187,15 @@ class InfrastructureWidget(QWidget):
         click first - most noticeably, the pod list previously stayed
         empty until Refresh Pods was clicked, even right after switching
         onto the Kubernetes tab. Indices match the fixed addTab() order
-        in _build_ui(): 0=Overview, 1=Kubernetes, 2=Terraform.
+        in _build_ui(): 0=Overview, 1=Kubernetes, 2=Terraform, 3=Helm.
         """
         if index == 0:
             self.refresh_overview()
         elif index == 1:
             self.refresh_pods()
             self._populate_cluster_list()
+        elif index == 3:
+            self.refresh_helm_releases()
 
     def _populate_cluster_list(self):
         """
@@ -331,6 +335,7 @@ class InfrastructureWidget(QWidget):
         self.tabs.addTab(self._build_overview_tab(), "\U0001F4CB Overview")
         self.tabs.addTab(self._build_kubernetes_tab(), "\u2638 Kubernetes")
         self.tabs.addTab(self._build_terraform_tab(), "\U0001F5FA Terraform")
+        self.tabs.addTab(self._build_helm_tab(), "\u2388 Helm")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         splitter.addWidget(self.tabs)
 
@@ -357,6 +362,8 @@ class InfrastructureWidget(QWidget):
             self.refresh_pods_btn, self.pod_logs_btn,
             self.tf_init_btn, self.tf_plan_btn, self.tf_apply_btn,
             self.tf_destroy_btn, self.tf_validate_btn, self.tf_fmt_btn,
+            self.helm_scaffold_btn, self.helm_lint_btn, self.helm_template_btn,
+            self.helm_install_btn, self.helm_uninstall_btn,
         ]
 
     # -- Overview tab ---------------------------------------------------
@@ -515,6 +522,8 @@ class InfrastructureWidget(QWidget):
         # Pre-fill terraform directory and cluster name if not already edited
         if d["terraform_dir"] and not self.tf_dir_edit.text():
             self.tf_dir_edit.setText(str(d["terraform_dir"]))
+        if d["helm_dir"] and not self.helm_dir_edit.text():
+            self.helm_dir_edit.setText(str(d["helm_dir"]))
         if not self.cluster_name_edit.currentText():
             self.cluster_name_edit.setCurrentText(self.detector.default_cluster_name())
 
@@ -829,3 +838,195 @@ class InfrastructureWidget(QWidget):
         if not self._confirm("Destroy Terraform", f"Run terraform destroy in:\n{d}\n\nThis will tear down all managed resources."):
             return
         self.run_command(TerraformManager.destroy_command(), cwd=d, label="terraform destroy")
+
+    # -- Helm tab ---------------------------------------------------------
+
+    def _build_helm_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        dir_box = _group("\u2388 Helm Chart Directory")
+        dir_layout = QVBoxLayout(dir_box)
+
+        path_row = QHBoxLayout()
+        self.helm_dir_edit = QLineEdit()
+        self.helm_dir_edit.setToolTip(
+            "The chart itself - the folder containing Chart.yaml, e.g. helm/my-app/ "
+            "(not just the top-level helm/ folder, unless the chart lives directly in it)."
+        )
+        path_row.addWidget(self.helm_dir_edit)
+        dir_layout.addLayout(path_row)
+
+        scaffold_row = QHBoxLayout()
+        scaffold_row.addWidget(QLabel("New chart name:"))
+        self.helm_new_chart_edit = QLineEdit()
+        scaffold_row.addWidget(self.helm_new_chart_edit, stretch=1)
+        self.helm_scaffold_btn = _button("+ helm create")
+        self.helm_scaffold_btn.setToolTip(
+            "Run Helm's own `helm create <name>` inside helm/, then point the field "
+            "above at the result - real Chart.yaml/values.yaml/templates/, not a hand-rolled starter."
+        )
+        self.helm_scaffold_btn.clicked.connect(self.helm_create_chart)
+        scaffold_row.addWidget(self.helm_scaffold_btn)
+        dir_layout.addLayout(scaffold_row)
+
+        layout.addWidget(dir_box)
+
+        release_box = _group("Release")
+        release_layout = QHBoxLayout(release_box)
+        release_layout.addWidget(QLabel("Release name:"))
+        self.helm_release_edit = QLineEdit()
+        self.helm_release_edit.setToolTip("Name for the Helm release, e.g. 'my-app'.")
+        release_layout.addWidget(self.helm_release_edit, stretch=1)
+        layout.addWidget(release_box)
+
+        actions_box = _group("Actions")
+        actions_layout = QHBoxLayout(actions_box)
+
+        self.helm_lint_btn = _button("Lint")
+        self.helm_lint_btn.clicked.connect(self.helm_lint)
+        actions_layout.addWidget(self.helm_lint_btn)
+
+        self.helm_template_btn = _button("\U0001F4C4 Template")
+        self.helm_template_btn.setToolTip("Render the chart locally - no cluster required.")
+        self.helm_template_btn.clicked.connect(self.helm_template)
+        actions_layout.addWidget(self.helm_template_btn)
+
+        self.helm_install_btn = _button("\u2795 Install / Upgrade")
+        self.helm_install_btn.clicked.connect(self.helm_install)
+        actions_layout.addWidget(self.helm_install_btn)
+
+        self.helm_uninstall_btn = _button("\u274C Uninstall")
+        self.helm_uninstall_btn.clicked.connect(self.helm_uninstall)
+        actions_layout.addWidget(self.helm_uninstall_btn)
+        actions_layout.addStretch()
+        layout.addWidget(actions_box)
+
+        releases_box = _group("\U0001F4E6 Releases (this cluster)")
+        releases_layout = QVBoxLayout(releases_box)
+
+        releases_btn_row = QHBoxLayout()
+        helm_refresh_btn = _button("\U0001F504 Refresh Releases")
+        helm_refresh_btn.clicked.connect(self.refresh_helm_releases)
+        releases_btn_row.addWidget(helm_refresh_btn)
+        releases_btn_row.addStretch()
+        releases_layout.addLayout(releases_btn_row)
+
+        self.helm_releases_list = QListWidget()
+        self.helm_releases_list.setStyleSheet("""
+            QListWidget { background: #2D2D2D; color: #CCC; border: 1px solid #555; }
+        """)
+        releases_layout.addWidget(self.helm_releases_list)
+        layout.addWidget(releases_box)
+
+        layout.addStretch()
+        return widget
+
+    def _helm_dir(self):
+        text = self.helm_dir_edit.text().strip()
+        if not text:
+            self.log("[!] Set the Helm chart directory first.")
+            return None
+        path = Path(text)
+        if not path.is_dir():
+            self.log(f"[!] Not a directory: {path}")
+            return None
+        if not (path / "Chart.yaml").exists():
+            self.log(f"[!] {path} has no Chart.yaml - this doesn't look like a Helm chart. "
+                     f"A chart usually lives one level under helm/, e.g. helm/my-app/ "
+                     f"(use '+ helm create' above to scaffold one).")
+            return None
+        return path
+
+    def _helm_release_name(self):
+        name = self.helm_release_edit.text().strip()
+        if not name:
+            self.log("[!] Enter a release name first.")
+            return None
+        return name
+
+    def helm_create_chart(self):
+        helm_root = self.detection.get("helm_dir")
+        if not helm_root:
+            self.log("[!] No helm/ directory detected in this project - use the "
+                     "Overview tab's '+ helm/' button first.")
+            return
+        if not self.tools.get("helm"):
+            self.log("[!] helm is not installed.")
+            return
+        name = self.helm_new_chart_edit.text().strip()
+        if not name:
+            self.log("[!] Enter a name for the new chart first.")
+            return
+        target = helm_root / name
+        if target.exists():
+            self.log(f"[!] {target} already exists - not overwriting. Pick a different "
+                     f"name, or just set the Helm Chart Directory field above to it.")
+            return
+
+        def done(code):
+            if code == 0:
+                self.helm_dir_edit.setText(str(target))
+                self.log(f"[+] Chart directory field set to {target}")
+
+        self.run_command(HelmManager.create_chart_command(name), cwd=helm_root,
+                          label=f"helm create {name}", on_finished=done)
+
+    def helm_lint(self):
+        d = self._helm_dir()
+        if d:
+            self.run_command(HelmManager.lint_command(d), label="helm lint")
+
+    def helm_template(self):
+        d = self._helm_dir()
+        if not d:
+            return
+        name = self._helm_release_name()
+        if not name:
+            return
+        self.run_command(HelmManager.template_command(name, d), label="helm template")
+
+    def helm_install(self):
+        d = self._helm_dir()
+        if not d:
+            return
+        name = self._helm_release_name()
+        if not name:
+            return
+        if not self._daemon_ready():
+            return
+        cmd = HelmManager.install_command(name, d, context=self._current_cluster_context())
+        self.run_command(cmd, label=f"helm install {name}",
+                          on_finished=lambda c: self.refresh_helm_releases())
+
+    def helm_uninstall(self):
+        name = self._helm_release_name()
+        if not name:
+            return
+        if not self._confirm("Uninstall Helm Release", f"Uninstall release '{name}'? This cannot be undone."):
+            return
+        cmd = HelmManager.uninstall_command(name, context=self._current_cluster_context())
+        self.run_command(cmd, label=f"helm uninstall {name}",
+                          on_finished=lambda c: self.refresh_helm_releases())
+
+    def refresh_helm_releases(self):
+        if not self.tools.get("helm"):
+            self.log("[!] helm is not installed.")
+            self.helm_releases_list.clear()
+            self.helm_releases_list.addItem("helm not installed")
+            return
+        context = self._current_cluster_context()
+        code, output = run_quick(HelmManager.list_releases_command(context=context), timeout=8)
+        self.helm_releases_list.clear()
+        if code != 0:
+            label = f"No cluster named '{context}' reachable" if context else "No cluster reachable"
+            self.helm_releases_list.addItem(f"{label} - create one first")
+            return
+        releases = HelmManager.parse_release_list(output)
+        if not releases:
+            self.helm_releases_list.addItem("(no releases)")
+            return
+        for r in releases:
+            self.helm_releases_list.addItem(
+                f"{r.get('name')}  [{r.get('namespace')}]  {r.get('status')}  {r.get('chart')}"
+            )

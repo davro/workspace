@@ -57,6 +57,15 @@ https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
   sudo apt-get install -y terraform
 }
 
+install_helm() {
+  if command -v helm &>/dev/null; then
+    echo "[Infrastructure Plugin] helm already installed ($(helm version --short 2>/dev/null || echo present))"
+    return
+  fi
+  echo "[Infrastructure Plugin] Installing helm via the official get-helm-3 script..."
+  curl -s https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+}
+
 install_docker() {
   if command -v docker &>/dev/null; then
     echo "[Infrastructure Plugin] docker already installed ($(docker --version))"
@@ -92,5 +101,6 @@ echo "[Infrastructure Plugin] Checking dependencies..."
 install_k3d
 install_kubectl
 install_terraform
+install_helm
 check_container_runtime
 echo "[Infrastructure Plugin] Dependency check complete."

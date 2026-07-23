@@ -1,12 +1,21 @@
 # TESTING.md — Infrastructure Plugin manual test checklist
 
-Status: **all five parts below have passed at least once**, on a real
-machine, against real infrastructure (not just "the code runs"). Keep
-this as a regression checklist going forward — after touching anything
-in `InfrastructureWidget.py`, `KubernetesManager.py`, `TerraformManager.py`,
-or `ProjectDetector.py`, re-run whichever part is relevant before calling
-the change done. See `HANDOVER.md` for the full narrative of what each
-part actually confirmed and any gotchas hit along the way.
+Status: **Parts 1-5 have passed at least once**, on a real machine,
+against real infrastructure (not just "the code runs"). **Parts 6-7
+have only been logic-tested in a sandbox** (temp directories, no real
+Workspace IDE, no PyQt6, no `terraform`/`helm`/`kubectl` binary
+available there) - Part 7's directory/file creation was since confirmed
+on the real machine, but Part 6's actual click-through (the console
+messages when clicking Deploy/Init against an empty directory, inside
+the real IDE) hasn't been run for real yet. **Part 8 (Helm) is brand
+new and entirely unverified** - treat all three of these the same way
+you'd treat a fresh PR: real first, "confirmed" second. Keep this as a
+regression checklist going forward — after touching anything in
+`InfrastructureWidget.py`, `KubernetesManager.py`, `TerraformManager.py`,
+`HelmManager.py`, or `ProjectDetector.py`, re-run whichever part is
+relevant before calling the change done. See `HANDOVER.md` for the full
+narrative of what each part actually confirmed and any gotchas hit along
+the way.
 
 Nothing in this project is meant to be kept for its own sake. Delete the
 whole `test-infra-project/` folder if you want, or keep it around as a
@@ -205,7 +214,7 @@ switching to the empty project's cluster name correctly showed the "no
 cluster reachable" message instead of the other project's stale pod
 list; switching back correctly showed the real pods again.
 
-## Part 6 — Pre-flight validation for empty k8s/terraform dirs — ✅ PASSED
+## Part 6 — Pre-flight validation for empty k8s/terraform dirs — \u26A0\uFE0F LOGIC-TESTED ONLY, NOT YET RUN FOR REAL
 
 This part exists because "Deploy k8s/ Manifests" against an empty `k8s/`
 directory used to let kubectl's own cryptic error surface as-is (see
@@ -237,12 +246,16 @@ up, not just "some file exists somewhere under here."
    re-run Init/Plan.
    - Expect: no warning line, normal output as in Part 3.
 
-**Confirmed working** — empty `k8s/` correctly blocked deploy with a
-clear message and no kubectl invocation; empty `terraform/` correctly
-warned without blocking; both reverted to normal behavior once real
-files were present.
+**Logic-tested, not yet run for real** — `has_k8s_manifests()`/
+`has_terraform_files()` were exercised directly against real temp
+directories (empty vs. populated, `.yaml` vs `.yml`, nonexistent paths)
+and returned correct results every time - but that's calling the
+functions directly in a plain Python script, not clicking through the
+actual Workspace IDE. Nobody has yet clicked Deploy/Init in the real
+plugin against a genuinely empty directory and watched the console
+message appear. Do that (steps 1-6 above) before checking this off.
 
-## Part 7 — Overview tab: "+ Create" scaffold buttons — ✅ PASSED
+## Part 7 — Overview tab: "+ Create" scaffold buttons — \u26A0\uFE0F PARTIALLY CONFIRMED
 
 Needs a project with none of `terraform/`, `helm/`, `k8s/` present yet -
 a fresh throwaway folder works (e.g. an empty `workspace-scaffold-test/`
@@ -291,12 +304,84 @@ next to `test-infra-project/`).
    - Expect: since it's already disabled you can't actually click it,
      confirming step 2/4/6's disabling is real and not just visual.
 
-**Confirmed working** — each button creates exactly its own directory
-(never touching the other two), terraform/k8s starters are real
-deployable/applyable content (not empty placeholders), helm/ is
-correctly left empty, buttons correctly disable per-directory as each
-is created, and "Create All Missing" correctly creates only what's
-still missing.
+**Partially confirmed** — directory + starter-file creation is real,
+confirmed on the actual machine (steps 2/4/6): `terraform/main.tf` and
+`k8s/nginx-example.yaml` genuinely appeared via a click, not just in a
+sandbox test. **Steps 3/5/7/8/9 are still open** - nobody has yet
+actually deployed the scaffolded k8s manifest or applied the scaffolded
+Terraform through the UI, confirmed the buttons visually disable once
+their directory exists, or tried "Create All Missing" on a second
+project. Run those before checking this off as fully passed.
+
+## Part 8 — Helm tab — \u274C NOT YET RUN (brand new)
+
+Needs `helm` installed (`install.sh` now installs it - re-run if you
+don't have it yet) and a running cluster with a kube-context, same as
+Parts 1/5. Use `test-infra-project` or `infrastructure-complex`'s
+now-scaffolded `helm/` folder (currently empty - that's expected, see
+below).
+
+1. Kubernetes tab → confirm a cluster is running (create one if not).
+2. Helm tab → **Chart Directory** field should be auto-filled to the
+   project's `helm/` folder itself (from detection) - since that's just
+   the container folder, not a chart, this is *expected* to fail
+   validation once you try an action; that's what step 4 checks.
+3. Type a name (e.g. `demo`) into **New chart name** → click
+   **+ helm create**.
+   - Expect: console shows `$ helm create demo` then real
+     scaffold-generator output ending `[exit code 0]`, then
+     `[+] Chart directory field set to <path>/helm/demo`, and the
+     **Chart Directory** field visibly updates to that path.
+   - Verify at the shell: `ls <path>/helm/demo/` shows `Chart.yaml`,
+     `values.yaml`, `templates/`, etc - Helm's own real scaffold, not
+     anything hand-rolled by this plugin.
+4. Clear the **Chart Directory** field and re-type just the parent
+   `helm/` path (not `helm/demo/`) → click **Lint**.
+   - Expect: console shows `[!] <path>/helm has no Chart.yaml - this
+     doesn't look like a Helm chart...` and **no `helm lint` command is
+     dispatched** - confirms the validation actually blocks, matching
+     the k8s pre-flight pattern from Part 6.
+5. Put the **Chart Directory** field back to `helm/demo/` → click
+   **Lint**.
+   - Expect: `$ helm lint <path>/helm/demo`, ending
+     `1 chart(s) linted, 0 chart(s) failed`, `[exit code 0]`.
+6. Enter a release name (e.g. `demo`) → click **Template**.
+   - Expect: rendered manifest YAML in the console (Deployment/Service/
+     ServiceAccount from the default `helm create` chart) - this runs
+     with no cluster contacted at all, so it should work even before
+     Create Cluster.
+7. Click **Install / Upgrade**.
+   - Expect: `$ helm upgrade --install demo <path>/helm/demo --kube-context k3d-<name>`,
+     ending `STATUS: deployed`, `[exit code 0]`. The Releases list below
+     auto-refreshes and shows the new release.
+   - Cross-check: `kubectl --context k3d-<name> get pods` shows the
+     chart's default nginx pod running.
+8. Click **Install / Upgrade** again with no changes.
+   - Expect: this is the actual idempotency check for
+     `upgrade --install` - succeeds again (`REVISION: 2`), does **not**
+     error with "cannot re-use a name" the way a plain `helm install`
+     would on a second click.
+9. Click **Refresh Releases** on its own.
+   - Expect: shows the `demo` release with its namespace/status/chart
+     string, matching `helm list --all-namespaces --kube-context k3d-<name>`
+     run directly at a terminal.
+10. Click **Uninstall** → confirm the dialog.
+    - Expect: `STATUS: uninstalled` (or similar), `[exit code 0]`,
+      Releases list refreshes to `(no releases)`, and the pod from
+      step 7 disappears from `kubectl get pods`.
+11. Switch the Active Project dropdown to a *different* project with no
+    cluster yet → Helm tab → click **Refresh Releases**.
+    - Expect: `No cluster named 'k3d-<name>' reachable - create one
+      first` - this is the Part 5 context-scoping fix applying to Helm
+      too (`HelmManager` commands take `--kube-context` for the same
+      reason `KubernetesManager`'s do). If you see the other project's
+      releases here instead, that's the same regression class as
+      gotcha #12 - Helm needs re-checking against the context fix.
+
+**Not yet run** — this entire tab is new code. Nobody has executed a
+real `helm create`/`lint`/`template`/`install`/`uninstall` through it
+yet. Treat every line above as unverified until it's actually been
+clicked through on a real machine with a real cluster.
 
 ---
 
