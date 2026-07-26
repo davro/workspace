@@ -129,9 +129,26 @@ TESTING.md's Parts 6-8 have actually been run.
   `install.sh` now installs `helm` too. **None of this has been run
   against a real cluster.** See TESTING.md Part 8 for the full
   click-through - do that before treating any of it as working.
+- **Port Forward toggle (new, entirely unverified)** — a row on the
+  Kubernetes tab: service name + local/remote port fields, auto-filled
+  by `KubernetesManager.find_service_in_manifests()` actually parsing
+  the deployed k8s/ manifest for a Service resource (not hardcoded to
+  "nginx" - it picks up whatever's really there, `infra-plugin-test` or
+  `infra-plugin-example` or anything else). Start/Stop toggles a
+  `kubectl port-forward` that runs on its **own dedicated ProcessRunner
+  slot** (`self._pf_runner`), separate from the shared single-command
+  slot (`self._runner`) - this had to be split out because
+  port-forward is long-running by design (blocks until killed) instead
+  of running-to-completion like every other command in this plugin, so
+  it can't share that slot's "only one command at a time" bookkeeping
+  without either blocking every other action while forwarding, or vice
+  versa. `shutdown()` now stops *both* slots, not just one - an orphaned
+  port-forward left running after the widget's torn down would silently
+  hold its local port open forever. **None of this has been run against
+  a real cluster.** See TESTING.md Part 9.
 
 Every path in the original five-part TESTING.md checklist is verified.
-The three items just above are not yet - they're new, and only as good
+The four items just above are not yet - they're new, and only as good
 as their sandbox-level testing until proven otherwise on your machine.
 If you add further new actions beyond these, add a corresponding
 section to TESTING.md and follow the same "assert the real-world side

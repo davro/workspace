@@ -19,6 +19,14 @@ their output. It never calls subprocess directly - the widget runs
 everything through ProcessRunner so the UI thread never blocks.
 """
 
+from pathlib import Path
+
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
 
 class KubernetesManager:
     RUNTIME = "k3d"
@@ -118,3 +126,64 @@ class KubernetesManager:
     @staticmethod
     def current_context_command():
         return ["kubectl", "config", "current-context"]
+
+    # ------------------------------------------------------------------
+    # Port forwarding
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def port_forward_command(target, local_port, remote_port, namespace="default", context=None):
+        """
+        Build a `kubectl port-forward` command. `target` should already
+        be prefixed, e.g. 'svc/infra-plugin-example' or 'pod/some-pod'.
+
+        Unlike every other command this module builds, this one never
+        exits on its own under normal use - it runs until killed. The
+        widget dispatches it through its own dedicated ProcessRunner
+        slot rather than the shared single-command one for exactly that
+        reason (see InfrastructureWidget's port-forward handlers).
+        """
+        cmd = ["kubectl"]
+        if context:
+            cmd += ["--context", context]
+        cmd += ["port-forward", target, f"{local_port}:{remote_port}", "-n", namespace]
+        return cmd
+
+    @staticmethod
+    def find_service_in_manifests(k8s_dir):
+        """
+        Scans the .yaml/.yml files directly under k8s_dir (same
+        non-recursive scope as ProjectDetector.has_k8s_manifests /
+        `kubectl apply -f <dir>`'s own default) for the first Service
+        resource, and returns (name, port) from its first port entry -
+        e.g. ('infra-plugin-example', 80) for the scaffolded starter
+        manifest, or ('infra-plugin-test', 80) for the original
+        test-infra-project fixture.
+
+        This is a best-effort UI convenience (auto-filling the port-
+        forward target field), not something anything else depends on -
+        returns (None, None) on anything that doesn't cleanly resolve
+        to a single answer: no PyYAML installed, no k8s_dir, no Service
+        found, or a file that doesn't parse. Callers should treat that
+        the same as "nothing to suggest, let the user type it in".
+        """
+        if not HAS_YAML or not k8s_dir:
+            return None, None
+        k8s_dir = Path(k8s_dir)
+        if not k8s_dir.is_dir():
+            return None, None
+        for file in sorted(list(k8s_dir.glob("*.yaml")) + list(k8s_dir.glob("*.yml"))):
+            try:
+                with open(file, "r", encoding="utf-8") as f:
+                    docs = yaml.safe_load_all(f)
+                    for doc in docs:
+                        if not doc or doc.get("kind") != "Service":
+                            continue
+                        name = doc.get("metadata", {}).get("name")
+                        ports = doc.get("spec", {}).get("ports") or []
+                        port = ports[0].get("port") if ports else None
+                        if name and port:
+                            return name, port
+            except Exception:
+                continue
+        return None, None

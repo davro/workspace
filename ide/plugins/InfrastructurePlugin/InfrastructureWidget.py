@@ -55,6 +55,10 @@ class InfrastructureWidget(QWidget):
         self.plugin = plugin
         self.api = plugin.api
         self._runner = None  # currently active ProcessRunner, if any
+        self._pf_runner = None  # dedicated slot for `kubectl port-forward` -
+        # this one runs indefinitely rather than to completion, so it can't
+        # share _runner's single-slot/blocks-other-actions bookkeeping. See
+        # start_port_forward()/stop_port_forward().
         # None = follow whatever the IDE considers the "open" project
         # (via get_workspace_path()). Set once the user picks something
         # from the Active Project dropdown, and from then on that
@@ -194,6 +198,7 @@ class InfrastructureWidget(QWidget):
         elif index == 1:
             self.refresh_pods()
             self._populate_cluster_list()
+            self._populate_port_forward_defaults()
         elif index == 3:
             self.refresh_helm_releases()
 
@@ -268,20 +273,34 @@ class InfrastructureWidget(QWidget):
         something a try/except can catch afterward. Cluster-create can
         legitimately take 30-50+ seconds, so this can genuinely have
         something to wait for, not just a formality.
+
+        Covers both runner slots: the shared single-command one, and the
+        dedicated port-forward one - an orphaned `kubectl port-forward`
+        left running after the widget is gone would silently hold its
+        local port open forever with nothing left to stop it.
         """
-        if self._runner is None:
-            return
-        self.log("[!] Stopping in-flight command before shutdown...")
-        self._runner.cancel()
-        if not self._runner.wait(5000):
+        if self._runner is not None:
+            self.log("[!] Stopping in-flight command before shutdown...")
+            self._stop_runner_blocking(self._runner)
+            self._runner = None
+        if self._pf_runner is not None:
+            self.log("[!] Stopping port-forward before shutdown...")
+            self._stop_runner_blocking(self._pf_runner)
+            self._pf_runner = None
+
+    def _stop_runner_blocking(self, runner):
+        """Shared cancel-then-wait-with-grace-period logic for shutdown()'s
+        two runner slots - see shutdown()'s docstring for why this needs
+        to block at all."""
+        runner.cancel()
+        if not runner.wait(5000):
             # cancel() already tried terminate() then kill() on the
             # subprocess itself - if the QThread STILL hasn't exited
             # after 5s, something is stuck reading a pipe that will
             # never close. Give it one more grace period; if that also
             # fails there's nothing safe left to do but proceed, since
             # blocking the whole IDE shutdown indefinitely is worse.
-            self._runner.wait(3000)
-        self._runner = None
+            runner.wait(3000)
 
     def closeEvent(self, event):
         # Defense in depth: if the IDE ever tears this widget down through
@@ -526,6 +545,7 @@ class InfrastructureWidget(QWidget):
             self.helm_dir_edit.setText(str(d["helm_dir"]))
         if not self.cluster_name_edit.currentText():
             self.cluster_name_edit.setCurrentText(self.detector.default_cluster_name())
+        self._populate_port_forward_defaults()
 
     def scaffold_dir(self, kind):
         """
@@ -602,6 +622,34 @@ class InfrastructureWidget(QWidget):
         btn_row.addWidget(self.deploy_btn)
         btn_row.addStretch()
         cluster_layout.addLayout(btn_row)
+
+        pf_row = QHBoxLayout()
+        pf_row.addWidget(QLabel("Port-forward svc/"))
+        self.pf_target_edit = QLineEdit()
+        self.pf_target_edit.setPlaceholderText("service name, e.g. infra-plugin-example")
+        self.pf_target_edit.setToolTip(
+            "Auto-filled by scanning k8s/ for a Service, once one's been deployed - "
+            "edit it to point at a different service."
+        )
+        pf_row.addWidget(self.pf_target_edit, stretch=1)
+        pf_row.addWidget(QLabel("localhost:"))
+        self.pf_local_port_spin = QSpinBox()
+        self.pf_local_port_spin.setRange(1, 65535)
+        self.pf_local_port_spin.setValue(8080)
+        pf_row.addWidget(self.pf_local_port_spin)
+        pf_row.addWidget(QLabel("\u2192"))
+        self.pf_remote_port_spin = QSpinBox()
+        self.pf_remote_port_spin.setRange(1, 65535)
+        self.pf_remote_port_spin.setValue(80)
+        pf_row.addWidget(self.pf_remote_port_spin)
+        self.pf_toggle_btn = _button("\u25B6 Start Port Forward")
+        self.pf_toggle_btn.clicked.connect(self.toggle_port_forward)
+        pf_row.addWidget(self.pf_toggle_btn)
+        self.pf_status_label = QLabel("Not forwarding")
+        self.pf_status_label.setStyleSheet("color: #888;")
+        pf_row.addWidget(self.pf_status_label)
+        cluster_layout.addLayout(pf_row)
+
         layout.addWidget(cluster_box)
 
         explorer_box = _group("\U0001F4E6 Resource Explorer")
@@ -702,7 +750,90 @@ class InfrastructureWidget(QWidget):
         if not self._daemon_ready():
             return
         cmd = KubernetesManager.apply_manifests_command(k8s_dir, context=self._current_cluster_context())
-        self.run_command(cmd, label="deploy manifests", on_finished=lambda c: self.refresh_pods())
+
+        def done(code):
+            self.refresh_pods()
+            if code == 0:
+                self._populate_port_forward_defaults()
+
+        self.run_command(cmd, label="deploy manifests", on_finished=done)
+
+    def _populate_port_forward_defaults(self):
+        """
+        Best-effort auto-fill for the port-forward target/port fields,
+        by scanning the detected k8s_dir for an actual Service resource
+        - e.g. picks up 'infra-plugin-example'/80 from the scaffolded
+        starter manifest, or 'infra-plugin-test'/80 from the original
+        test-infra-project fixture. Never overwrites something the user
+        already typed, and does nothing (not even log a message) if no
+        Service is found - this is a convenience, not a validated action,
+        so silent no-op is the right failure mode.
+        """
+        if self.pf_target_edit.text().strip():
+            return
+        name, port = KubernetesManager.find_service_in_manifests(self.detection.get("k8s_dir"))
+        if name:
+            self.pf_target_edit.setText(name)
+            if port:
+                self.pf_remote_port_spin.setValue(int(port))
+
+    def toggle_port_forward(self):
+        if self._pf_runner is not None:
+            self.stop_port_forward()
+        else:
+            self.start_port_forward()
+
+    def start_port_forward(self):
+        target = self.pf_target_edit.text().strip()
+        if not target:
+            self.log("[!] Enter a service name to port-forward first.")
+            return
+        if not self.tools.get("kubectl"):
+            self.log("[!] kubectl is not installed.")
+            return
+        local = self.pf_local_port_spin.value()
+        remote = self.pf_remote_port_spin.value()
+        context = self._current_cluster_context()
+        cmd = KubernetesManager.port_forward_command(f"svc/{target}", local, remote, context=context)
+        self.log(f"$ {' '.join(cmd)}")
+
+        self._pf_runner = ProcessRunner(cmd, label=f"port-forward {target}", parent=self)
+        self._pf_runner.line_ready.connect(self.log)
+
+        def done(code):
+            # kubectl port-forward only exits on its own if the target
+            # disappears (service/cluster deleted) or on error - unlike
+            # every other command here, there's no "normal success"
+            # completion to distinguish from a failure. Treat any exit
+            # the same way: forwarding has stopped, reset the toggle so
+            # the button can't get stuck saying "Stop" for a forward
+            # that's actually already dead.
+            self.log(f"[port-forward exited, code {code}]")
+            self._pf_runner = None
+            self.pf_toggle_btn.setText("\u25B6 Start Port Forward")
+            self.pf_status_label.setText("Not forwarding")
+            self.pf_status_label.setStyleSheet("color: #888;")
+
+        self._pf_runner.finished_ok.connect(done)
+        self._pf_runner.start()
+
+        self.pf_toggle_btn.setText("\u23F9 Stop Port Forward")
+        self.pf_status_label.setText(f"Forwarding localhost:{local} \u2192 svc/{target}:{remote}")
+        self.pf_status_label.setStyleSheet("color: #6FCF97;")
+
+    def stop_port_forward(self):
+        if self._pf_runner is None:
+            return
+        self.log("[!] Stopping port-forward...")
+        self._pf_runner.cancel()
+        # Deliberately not blocking here (unlike shutdown()'s use of the
+        # same cancel()) - this runs on a user click mid-session, not
+        # right before the widget is destroyed, so there's no need to
+        # freeze the UI waiting for it. done() above (wired to
+        # finished_ok) resets the button/status once the process
+        # actually exits.
+
+    # -- Kubernetes tab: Resource Explorer ---------------------------------
 
     def refresh_pods(self):
         if not self.tools.get("kubectl"):

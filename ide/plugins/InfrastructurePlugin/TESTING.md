@@ -214,7 +214,7 @@ switching to the empty project's cluster name correctly showed the "no
 cluster reachable" message instead of the other project's stale pod
 list; switching back correctly showed the real pods again.
 
-## Part 6 — Pre-flight validation for empty k8s/terraform dirs — \u26A0\uFE0F LOGIC-TESTED ONLY, NOT YET RUN FOR REAL
+## Part 6 — Pre-flight validation for empty k8s/terraform dirs — ⚠️ LOGIC-TESTED ONLY, NOT YET RUN FOR REAL
 
 This part exists because "Deploy k8s/ Manifests" against an empty `k8s/`
 directory used to let kubectl's own cryptic error surface as-is (see
@@ -255,7 +255,7 @@ actual Workspace IDE. Nobody has yet clicked Deploy/Init in the real
 plugin against a genuinely empty directory and watched the console
 message appear. Do that (steps 1-6 above) before checking this off.
 
-## Part 7 — Overview tab: "+ Create" scaffold buttons — \u26A0\uFE0F PARTIALLY CONFIRMED
+## Part 7 — Overview tab: "+ Create" scaffold buttons — ⚠️ PARTIALLY CONFIRMED
 
 Needs a project with none of `terraform/`, `helm/`, `k8s/` present yet -
 a fresh throwaway folder works (e.g. an empty `workspace-scaffold-test/`
@@ -313,7 +313,7 @@ Terraform through the UI, confirmed the buttons visually disable once
 their directory exists, or tried "Create All Missing" on a second
 project. Run those before checking this off as fully passed.
 
-## Part 8 — Helm tab — \u274C NOT YET RUN (brand new)
+## Part 8 — Helm tab — ❌ NOT YET RUN (brand new)
 
 Needs `helm` installed (`install.sh` now installs it - re-run if you
 don't have it yet) and a running cluster with a kube-context, same as
@@ -382,6 +382,59 @@ below).
 real `helm create`/`lint`/`template`/`install`/`uninstall` through it
 yet. Treat every line above as unverified until it's actually been
 clicked through on a real machine with a real cluster.
+
+## Part 9 — Kubernetes tab: Port Forward toggle — ❌ NOT YET RUN (brand new)
+
+Needs a running cluster with the k8s/ manifest already deployed (e.g.
+Part 1's `test-infra-project`, or the newly-scaffolded
+`infrastructure-complex`).
+
+1. Kubernetes tab, after a successful Deploy k8s/ Manifests → confirm
+   **Port-forward svc/** field auto-filled with the deployed service's
+   name (`infra-plugin-test` or `infra-plugin-example` depending on
+   which project), and the remote port shows `80` - both read from the
+   actual manifest via `KubernetesManager.find_service_in_manifests()`,
+   not hardcoded.
+2. Click **\u25B6 Start Port Forward**.
+   - Expect: console shows the exact `kubectl --context k3d-<name>
+     port-forward svc/<name> 8080:80 -n default` command, the button
+     changes to **\u23F9 Stop Port Forward**, and the status label shows
+     "Forwarding localhost:8080 \u2192 svc/<name>:80" in green.
+3. **Gold-standard check, same as Part 1 step 6**: `curl
+   http://localhost:8080` or open it in a browser - expect nginx's
+   actual welcome page.
+4. While it's still forwarding, click **Refresh Pods** and try a
+   Terraform action (e.g. Plan) at the same time.
+   - Expect: both work normally - the port-forward runs on its own
+     process slot and shouldn't block, or be blocked by, unrelated
+     commands.
+5. Click **\u23F9 Stop Port Forward**.
+   - Expect: console shows `[!] Stopping port-forward...` then
+     `[port-forward exited, code ...]`, button reverts to **\u25B6 Start
+     Port Forward**, status label reverts to "Not forwarding" in grey.
+   - Verify at the shell: `curl http://localhost:8080` now fails to
+     connect - confirms the process actually stopped, not just the UI.
+6. Start it again, then **Delete Cluster** without stopping it first.
+   - Expect: the port-forward process errors out and exits on its own
+     shortly after (broken pipe/connection refused) once the cluster's
+     gone - the button/status should self-reset via the same
+     `finished_ok` path as step 5, without needing a manual Stop click.
+7. Change the service name field to something that doesn't exist, click
+   Start.
+   - Expect: console shows kubectl's own error (e.g. "services ...
+     not found"), the process exits almost immediately, and the button/
+     status reset the same way - confirming there's no path where the
+     button gets stuck on "Stop" for a forward that never actually
+     started.
+8. Close/reload the plugin (or restart the IDE) while a port-forward is
+   still running.
+   - Expect (per `shutdown()`): the background `kubectl port-forward`
+     process is actually killed, not orphaned - `ps aux | grep
+     port-forward` on the host should show nothing left over
+     afterward.
+
+**Not yet run** — brand new code, same caveat as Part 8: nobody has
+clicked through this on a real machine with a real cluster yet.
 
 ---
 
