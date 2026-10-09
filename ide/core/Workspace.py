@@ -235,7 +235,10 @@ class Workspace(QMainWindow, SettingsProvider):
         if self.settings_manager.get('restore_session', True):
             self.session_manager.restore_session(
                 self.tab_manager,
-                self.settings_manager.settings
+                self.settings_manager.settings,
+                tree=self.tree,
+                file_model=self.file_model,
+                workspace_root=self.workspace_path
             )
 
         # Restore active projects
@@ -254,9 +257,14 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Track if session needs saving (optimization)
         self.session_dirty = False
-
+        
+        # Save explorer expansion/collapse changes with the session.
+        self.tree.expanded.connect(self.mark_session_dirty)
+        self.tree.collapsed.connect(self.mark_session_dirty)
+        
         # Apply initial settings
         self.apply_settings()
+
 
     def apply_settings(self):
         """
@@ -472,7 +480,9 @@ class Workspace(QMainWindow, SettingsProvider):
         self.tabs.setTabsClosable(True)
         self.tabs.setMovable(True)
 
-        self.tabs.tabCloseRequested.connect(lambda idx: self.split_manager.close_tab_in_group(0, idx))
+        # self.tabs.tabCloseRequested.connect(
+            # lambda idx: self.split_manager.close_tab_in_group(0, idx)
+        # )
 
         self.tabs.currentChanged.connect(self.on_editor_tab_changed)
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1581,7 +1591,13 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Save session if enabled
         if self.settings_manager.get('restore_session', True):
-            self.session_manager.save_session(self.tabs, self.main_splitter)
+            self.session_manager.save_session(
+                self.tabs,
+                self.main_splitter,
+                tree=self.tree,
+                file_model=self.file_model,
+                workspace_root=self.workspace_path
+            )
 
         # Check for unsaved files
         unsaved_files = []
@@ -1618,9 +1634,18 @@ class Workspace(QMainWindow, SettingsProvider):
     # =====================================================================
 
     def auto_save_session(self):
-        """Auto-save session if changes detected"""
-        if self.settings_manager.get('restore_session', True) and self.session_dirty:
-            self.session_manager.save_session(self.tabs, self.main_splitter)
+        """Auto-save session if changes detected."""
+        if (
+            self.settings_manager.get('restore_session', True)
+            and self.session_dirty
+        ):
+            self.session_manager.save_session(
+                self.tabs,
+                self.main_splitter,
+                tree=self.tree,
+                file_model=self.file_model,
+                workspace_root=self.workspace_path
+            )
             self.session_dirty = False
 
     def mark_session_dirty(self):
@@ -1641,54 +1666,67 @@ class Workspace(QMainWindow, SettingsProvider):
         Reveal the current file in the file explorer tree.
         Similar to VSCode/Cursor's "Reveal in Explorer" feature.
         """
-        # Get current editor
+        # Get the current editor
         current_editor = self.get_current_editor()
-        
+    
         if not isinstance(current_editor, CodeEditor):
             self.show_status_message("No file open", 2000)
             return
-        
-        if not hasattr(current_editor, 'file_path') or not current_editor.file_path:
-            self.show_status_message("Current editor has no file path", 2000)
+    
+        if not getattr(current_editor, 'file_path', None):
+            self.show_status_message(
+                "Current editor has no file path", 2000
+            )
             return
-        
-        file_path = Path(current_editor.file_path)
-        
-        # Check if file is within workspace
+    
+        # Normalize both paths before checking workspace membership.
+        file_path = Path(current_editor.file_path).resolve()
+        workspace_root = Path(self.workspace_path).resolve()
+    
         try:
-            file_path.relative_to(self.workspace_path)
+            file_path.relative_to(workspace_root)
         except ValueError:
-            self.show_status_message("File is outside workspace", 2000)
+            self.show_status_message(
+                "File is outside workspace", 2000
+            )
             return
-        
-        # Get the model index for this file
+    
+        # Look up the file using its normalized absolute path.
         index = self.file_model.index(str(file_path))
-        
+    
         if not index.isValid():
-            self.show_status_message("Could not find file in explorer", 2000)
+            self.show_status_message(
+                "Could not find file in explorer", 2000
+            )
             return
-        
-        # Make sure explorer is visible
+    
+        # Make sure the explorer is visible.
         explorer_widget = self.main_splitter.widget(0)
+    
         if not explorer_widget.isVisible():
             explorer_widget.setVisible(True)
-        
-        # Switch to Files tab (index 0)
+    
+        # Switch to the Files tab.
         left_tabs = explorer_widget.findChild(QTabWidget)
+    
         if left_tabs:
             left_tabs.setCurrentIndex(0)
-        
-        # Expand parent folders
+    
+        # Expand all parent directories, from the file upwards.
         parent_index = index.parent()
+    
         while parent_index.isValid():
             self.tree.expand(parent_index)
             parent_index = parent_index.parent()
-        
-        # Select and scroll to the file
+    
+        # Select and scroll to the file.
         self.tree.setCurrentIndex(index)
-        self.tree.scrollTo(index, QTreeView.ScrollHint.PositionAtCenter)
-        
-        # Give focus to the tree (optional - remove if you want focus to stay in editor)
-        # self.tree.setFocus()
-        
-        self.show_status_message(f"Revealed: {file_path.name}", 2000)
+        self.tree.scrollTo(
+            index,
+            QTreeView.ScrollHint.PositionAtCenter
+        )
+    
+        self.show_status_message(
+            f"Revealed: {file_path.name}", 2000
+        )
+
