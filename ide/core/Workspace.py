@@ -265,7 +265,6 @@ class Workspace(QMainWindow, SettingsProvider):
         # Apply initial settings
         self.apply_settings()
 
-
     def apply_settings(self):
         """
         Apply current settings to workspace components.
@@ -1023,7 +1022,6 @@ class Workspace(QMainWindow, SettingsProvider):
                     self.settings_manager.settings
                 )
 
-
     # =====================================================================
     # Find/Replace Operations
     # =====================================================================
@@ -1044,7 +1042,6 @@ class Workspace(QMainWindow, SettingsProvider):
         """Find previous occurrence"""
         if self.find_replace.isVisible():
             self.find_replace.find_previous()
-
 
     # =====================================================================
     # Edit Operations
@@ -1271,8 +1268,6 @@ class Workspace(QMainWindow, SettingsProvider):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open terminal: {str(e)}")
 
-
-
     # ============================================================================
     # Status Message Helper Methods (keep these)
     # ============================================================================
@@ -1458,7 +1453,6 @@ class Workspace(QMainWindow, SettingsProvider):
                     0
                 ])
 
-
     # ============================================================================
     # Utility methods
     # ============================================================================
@@ -1525,7 +1519,6 @@ class Workspace(QMainWindow, SettingsProvider):
                 self.tab_order_manager.record_access(dialog.selected_tab)
         #else:
             # print(f"[DEBUG] Dialog rejected/cancelled")
-
 
     # ============================================================================
     # Optional: Add hook trigger methods to Workspace class
@@ -1628,7 +1621,6 @@ class Workspace(QMainWindow, SettingsProvider):
 
         event.accept()
 
-
     # =====================================================================
     # Application Session
     # =====================================================================
@@ -1652,14 +1644,12 @@ class Workspace(QMainWindow, SettingsProvider):
         """Mark session as needing save"""
         self.session_dirty = True
 
-
     def changeEvent(self, event):
         """Save on minimize/deactivate"""
         super().changeEvent(event)
         if event.type() == event.Type.WindowStateChange:
             if self.isMinimized():
                 self.auto_save_session()
-
 
     def reveal_in_explorer(self):
         """
@@ -1729,4 +1719,3 @@ class Workspace(QMainWindow, SettingsProvider):
         self.show_status_message(
             f"Revealed: {file_path.name}", 2000
         )
-
