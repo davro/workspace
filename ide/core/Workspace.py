@@ -35,6 +35,7 @@ from ide.core.TabBar import StyledTabWidget
 from ide.core.TabSwitcher import TabSwitcherDialog
 from ide.core.ProjectsPanel import ProjectsPanel
 from ide.core.PluginManagerUI import PluginManagerUI
+from ide.core.ProjectTasksPanel import ProjectTasksPanel
 from ide.core.CodeEditor import CodeEditor
 from ide.core.DragDropTreeView import DragDropTreeView
 from ide.core.CombinedTreeDelegate import CombinedTreeDelegate
@@ -391,9 +392,9 @@ class Workspace(QMainWindow, SettingsProvider):
 
     def _create_left_sidebar(self):
         """Create left sidebar with file explorer and projects"""
-        left_tabs = QTabWidget()
-        left_tabs.setMaximumWidth(450)
-
+        self.left_tabs = QTabWidget()
+        self.left_tabs.setMaximumWidth(450)
+      
         # File Explorer
         explorer_widget = QWidget()
         explorer_layout = QVBoxLayout(explorer_widget)
@@ -424,14 +425,24 @@ class Workspace(QMainWindow, SettingsProvider):
         self.tree.customContextMenuRequested.connect(self.show_explorer_context_menu)
 
         explorer_layout.addWidget(self.tree)
-        left_tabs.addTab(explorer_widget, "📁 Files")
 
-        # Projects Panel
+        # Keep your existing Files tab creation:
+        self.left_tabs.addTab(explorer_widget, "📁 Files")
+        
+        # Keep your existing ProjectsPanel setup:
         self.projects_panel = ProjectsPanel(self.workspace_path, self)
         self.projects_panel.projects_changed.connect(self.update_tree_highlighting)
-        left_tabs.addTab(self.projects_panel, "📦 Projects")
+        self.left_tabs.addTab(self.projects_panel, "📦 Projects")
+        
+        # self.project_tasks_panel = ProjectTasksPanel(self.workspace_path, self)
+        self.project_tasks_panel = ProjectTasksPanel(
+            self.workspace_path,
+            self,
+            projects_panel=self.projects_panel,
+        )
+        self.left_tabs.addTab(self.project_tasks_panel, "▶ Tasks")
 
-        self.main_splitter.addWidget(left_tabs)
+        self.main_splitter.addWidget(self.left_tabs)
 
     def handle_file_moved(self, old_path: str, new_path: str):
         """
@@ -762,6 +773,18 @@ class Workspace(QMainWindow, SettingsProvider):
                 menu.addSeparator()
 
                 delete_action = menu.addAction("Delete")
+
+                tasks = self.project_tasks_panel.get_tasks_for_directory(path)
+                if tasks:
+                    menu.addSeparator()
+                    task_menu = menu.addMenu("▶ Project Tasks")
+                    for task in tasks:
+                        action = task_menu.addAction(task.name)
+                        action.setToolTip(task.description)
+                        action.triggered.connect(
+                            lambda checked=False, project_path=path, task_name=task.name:
+                                self.project_tasks_panel.run_task_for_directory(project_path, task_name)
+                        )
 
                 action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
@@ -1557,6 +1580,9 @@ class Workspace(QMainWindow, SettingsProvider):
 
     def closeEvent(self, event):
         """Handle application close"""
+
+        if hasattr(self, "project_tasks_panel"):
+            self.project_tasks_panel.close_running_task()
 
         # *** NEW: Stop monitoring all files ***
         if hasattr(self, 'file_monitor'):

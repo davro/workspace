@@ -334,36 +334,63 @@ The IDE stores configuration in your workspace directory:
 - CSS/SCSS (selectors)
 - JSON (top-level keys)
 
+
 ## Roadmap
 
-### Recently Completed ✅
+Workspace is evolving into a lightweight, extensible development environment with local AI assistance and a project-centred workflow. 
+Features below are grouped by their current status.
 
-- ✅ Split view (side-by-side editing)
-- ✅ Drag-and-drop file moving
-- ✅ Unicode file icons
-- ✅ Middle-click to close tabs
-- ✅ Multi-language outline navigator
-- ✅ Comment/uncomment with proper indentation
-- ✅ Duplicate line/selection
-- ✅ Tab switcher with recent order
-- ✅ Recent files menu
-- ✅ Enter key to open files in tree
+### Implemented
 
-### Planned Features
+- [x] **Split Editor** — vertical and horizontal layouts, independent tab groups, and moving tabs between groups.
+- [x] **Project Management** — activate projects and focus file searches on the projects you're working on.
+- [x] **File Explorer** — create, rename, move, and delete files and folders, with deleted items sent to the system Trash.
+- [x] **Session Persistence** — restore open tabs and preserve workspace state between sessions.
+- [x] **Quick Open** — fuzzy file search with `Ctrl+P`, plus recent-file navigation.
+- [x] **Code Outline** — navigate classes, functions, methods, and other supported symbols across multiple languages.
+- [x] **Search and Replace** — regex support, matching options, and navigation through results.
+- [x] **Editor Productivity** — line numbers, comment/uncomment, duplicate line or selection, indentation, and multiple cursors.
+- [x] **Ollama Integration** — local AI assistance, configurable models, and code-aware prompts.
+- [x] **Plugin Architecture** — discoverable plugins that can extend the IDE with new tools, interfaces, and workflows.
+- [x] **Keyboard Shortcuts** — shortcuts for navigation, editing, split views, and AI actions.
+- [x] **Configurable Settings** — persistent IDE settings and extensible configuration.
 
-- [ ] Minimap for code overview
-- [ ] Additional syntax highlighting (more languages)
-- [ ] Auto-save functionality
-- [ ] Move line up/down
-- [ ] Multi-cursor support
-- [ ] Code folding
-- [ ] Git integration
-- [ ] Extensions system
-- [ ] Themes support
-- [ ] Debug console integration
-- [ ] Breadcrumb navigation
-- [ ] Symbol search across project
-- [ ] Advanced refactoring tools
+### Planned — Editor Improvements
+
+- [ ] Code minimap and overview navigation.
+- [ ] Expand syntax highlighting and language-specific editing support.
+- [ ] Configurable auto-save and recovery options.
+- [ ] Move lines or selections up and down.
+- [ ] Code folding for functions, classes, and structured blocks.
+- [ ] Breadcrumb navigation through files and symbols.
+- [ ] Improved bracket matching and structural navigation.
+
+### Planned — Development Workflow
+
+- [ ] Git integration with change indicators, diffs, staging, and commit workflows.
+- [ ] Project-wide symbol search and reference navigation.
+- [ ] Integrated debugging and breakpoint support.
+- [ ] Advanced refactoring tools, including rename symbol and safe code transformations.
+- [ ] Configurable themes and editor appearance.
+- [ ] Unified diagnostics panel for errors, warnings, and task output.
+- [ ] Project tasks for running tests, linters, formatters, and build commands.
+
+### Planned — AI-Assisted Development
+
+- [ ] Project-aware AI context with explicit control over which files are included.
+- [ ] Reviewable AI code changes with diff previews before applying edits.
+- [ ] Reusable AI workflows for explaining, testing, refactoring, and documenting code.
+- [ ] Local model profiles for different tasks and hardware capabilities.
+
+### Longer-Term Ideas
+
+- [ ] Workspace profiles for different projects and development environments.
+- [ ] Plugin discovery, documentation, and easier sharing of extensions.
+- [ ] Project health dashboard covering tests, diagnostics, and Git status.
+- [ ] Workflow automation that connects editor actions, terminal commands, and local AI tools.
+
+*Roadmap items are indicative rather than release commitments. Features will be prioritised based on usefulness, stability, and the needs of the project.*
+
 
 ## Contributing
 

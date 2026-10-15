@@ -47,8 +47,12 @@ activate_venv() {
 install_packages() {
 
   echo "[+] Installing system packages"
-  sudo apt install yt-dlp
-  sudo apt install ffmpeg
+  sudo apt install composer
+  sudo apt install python3-build
+
+  # VideoEditorPlugin (removed)
+  #sudo apt install yt-dlp
+  #sudo apt install ffmpeg
 
   echo "[+] Installing packages"
   pip install --upgrade pip
