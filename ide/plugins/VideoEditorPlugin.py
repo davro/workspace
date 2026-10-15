@@ -31,7 +31,7 @@ class VideoEditorPlugin:
     PLUGIN_NAME        = "Video Editor"
     PLUGIN_VERSION     = "0.1.0"
     PLUGIN_DESCRIPTION = "Professional non-linear video editor powered by FFmpeg"
-    PLUGIN_RUN_ON_STARTUP = True
+    PLUGIN_RUN_ON_STARTUP = False
     PLUGIN_HAS_UI      = True
     PLUGIN_ICON        = "🎬"
     PLUGIN_DEPENDENCIES = ["ffmpeg-python", "opencv-python"]

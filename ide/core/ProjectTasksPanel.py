@@ -7,6 +7,8 @@ from PyQt6.QtCore import QProcess, QTimer, Qt
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QListWidget, QListWidgetItem, QPlainTextEdit, QMessageBox, QSplitter, QGroupBox)
 from .ProjectTaskManager import ProjectTaskManager, ProjectTask
+from .ProjectManager import ProjectManager
+from .NewProjectDialog import NewProjectDialog
 
 
 class ProjectTasksPanel(QWidget):
@@ -17,6 +19,7 @@ class ProjectTasksPanel(QWidget):
 
         self.workspace_path = Path(workspace_path).expanduser().resolve()
         self.manager = ProjectTaskManager(self.workspace_path)
+        self.project_manager = ProjectManager(self.workspace_path)
 
         # Reference to the Projects tab.
         self.projects_panel = projects_panel
@@ -38,6 +41,31 @@ class ProjectTasksPanel(QWidget):
         """Refresh tasks when the activated project list changes."""
         self.refresh_projects()
 
+    def new_project(self, directory=None, in_place=None):
+        """Open the New Project wizard.
+
+        With no directory the project is created as <workspace>/<name>. When a
+        directory is given (e.g. from the file explorer's context menu) it is
+        initialised in place, unless in_place=False asks for a subfolder of it.
+        """
+        if in_place is None:
+            in_place = directory is not None
+        dialog = NewProjectDialog(
+            self.project_manager, directory or self.workspace_path, self,
+            in_place=in_place,
+        )
+        dialog.project_created.connect(self._project_created)
+        dialog.exec()
+
+    def _project_created(self, path):
+        """Activate a freshly created project so its tasks appear here."""
+        activate = getattr(self.projects_panel, "activate_project", None)
+        if callable(activate):
+            # activate_project() emits projects_changed, which refreshes us.
+            activate(path)
+        else:
+            self.refresh_projects()
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -47,6 +75,10 @@ class ProjectTasksPanel(QWidget):
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self.refresh_projects)
         header.addWidget(self.refresh_button)
+        self.new_button = QPushButton("New…")
+        self.new_button.setToolTip("Create or initialise a project")
+        self.new_button.clicked.connect(lambda: self.new_project())
+        header.addWidget(self.new_button)
         layout.addLayout(header)
         self.project_combo = QComboBox()
         self.project_combo.currentIndexChanged.connect(self._project_changed)
@@ -319,6 +351,7 @@ class ProjectTasksPanel(QWidget):
         self.run_button.setEnabled(not running and selected)
         self.stop_button.setEnabled(running)
         self.refresh_button.setEnabled(not running)
+        self.new_button.setEnabled(not running)
         self.project_combo.setEnabled(not running)
 
     def close_running_task(self):

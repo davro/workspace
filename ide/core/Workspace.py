@@ -162,16 +162,17 @@ class Workspace(QMainWindow, SettingsProvider):
         # Linux   : ~/.config/workspace-ide/
         # macOS   : ~/Library/Application Support/workspace-ide/
         # Windows : %APPDATA%\workspace-ide\
+
         self.app_config_dir = AppDirs.base()
         self.config_file    = self.app_config_dir / "config.json"
         self.session_file   = self.app_config_dir / "session.json"
 
-        print(f"ℹ️  Using IDE from cwd: {cwd}")
-        print(f"ℹ️  Using IDE plugin_path: {self.workspace_plugin_path}")
-        print(f"ℹ️  workspace_path: {self.workspace_path}")
-        print(f"ℹ️  config dir: {self.app_config_dir}")
-        print(f"ℹ️  config_file: {self.config_file}")
-        print(f"ℹ️  session_file: {self.session_file}")
+        print(f"ℹ️  Workspace IDE cwd: {cwd}")
+        print(f"ℹ️  Workspace IDE plugin_path: {self.workspace_plugin_path}")
+        print(f"ℹ️  Workspace IDE workspace_path: {self.workspace_path}")
+        print(f"ℹ️  Workspace IDE config dir: {self.app_config_dir}")
+        print(f"ℹ️  Workspace IDE config_file: {self.config_file}")
+        print(f"ℹ️  Workspace IDE session_file: {self.session_file}")
 
         # Quick open cache
         self.quick_open_cache = []

@@ -27,18 +27,18 @@ class ProjectsPanel(QWidget, SettingsProvider):
     # Note: active_projects is managed dynamically, but we still want it
     # persisted in settings. We don't show it in the settings UI since
     # it's managed through this panel's checkboxes.
-    # 
+    #
     # To hide from settings dialog, we could add a 'hidden' flag to
     # SettingDescriptor, or just not include it. For now, we'll manage
     # it manually outside the descriptor system.
     # ========================================================================
-    
+
     SETTINGS_DESCRIPTORS = [
         # We could add project-related settings here if needed, like:
         # - Auto-refresh interval
         # - Show hidden folders
         # - File count display toggle
-        # 
+        #
         # For now, active_projects is managed separately since it's
         # a dynamic list that changes through UI interaction, not
         # through the settings dialog.
@@ -159,3 +159,11 @@ class ProjectsPanel(QWidget, SettingsProvider):
                 item.setCheckState(Qt.CheckState.Unchecked)
         self.update_stats()
         self.projects_changed.emit()
+
+    def activate_project(self, path):
+        """Mark a project active and rebuild the list (used after New Project)."""
+        resolved = str(Path(path).resolve())
+        self.active_projects.add(resolved)
+        self.scan_projects()          # items are built checked from active_projects
+        self.project_selected.emit(resolved)
+        self.projects_changed.emit()  # scan_projects doesn't emit this itself

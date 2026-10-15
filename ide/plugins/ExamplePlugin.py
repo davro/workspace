@@ -51,9 +51,9 @@ class ExamplePlugin:
     PLUGIN_NAME = "Example Plugin"
     PLUGIN_VERSION = "1.0.5"
     PLUGIN_DESCRIPTION = "Comprehensive example showing all plugin features"
-    PLUGIN_RUN_ON_STARTUP = True   # Auto-start in background
-    PLUGIN_HAS_UI = False            # Has a UI panel
-    PLUGIN_ICON = "📚"              # Icon for toolbar
+    PLUGIN_RUN_ON_STARTUP = False  # Auto-start in background
+    PLUGIN_HAS_UI = False          # Has a UI panel
+    PLUGIN_ICON = "📚"             # Icon for toolbar
     
     # ========================================================================
     # Initialization
