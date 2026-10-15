@@ -43,6 +43,13 @@ A lightweight, feature-rich Python-based IDE built with PyQt6, designed for mana
   - Search/filter symbols
   - Auto-updates on tab switch
   - Works seamlessly with split view
+- **Code Intelligence** (plugin, right sidebar): Project-wide symbol index and navigation
+  - **Jump to Definition** (`Ctrl+Shift+G`): ranked using the current file's imports, with a pick-menu when several definitions are equally likely
+  - **Find All References** (`Ctrl+Shift+R`): results grouped by file in the *Refs* tab, marked as definition / reference / comment / string, click to jump
+  - **Quick Symbol Search** (`Ctrl+T`): fuzzy search across every indexed class, function and method
+  - **Symbols tab**: tree of the current file that follows the active editor tab
+  - Uses the live editor text, so unsaved edits are included in jumps and reference searches
+  - Indexes Python (AST), PHP and Go in a background thread; re-indexes on save and indexes files on demand
 - **Quick Open (Ctrl+P)**: Fuzzy file search across active projects
   - Intelligent scoring algorithm
   - Color-coded results by file type
@@ -179,6 +186,7 @@ ollama pull llama3
 4. **Open files**: Use the file explorer or Quick Open (Ctrl+P)
 5. **Split view**: Press `Ctrl+\` for vertical split or `Ctrl+Shift+\` for horizontal split
 6. **Code outline**: View code structure in the "📋 Outline" tab on the right
+7. **Code intelligence**: Use the "🧠 Code Intel" tab on the right, then `Ctrl+Shift+G` to jump to a definition or `Ctrl+Shift+R` to list references
 
 ### Keyboard Shortcuts
 
@@ -239,6 +247,9 @@ ollama pull llama3
 |----------|--------|
 | `Ctrl+P` | Go to File |
 | `Ctrl+G` | Go to Line |
+| `Ctrl+T` | Quick Symbol Search (Code Intelligence) |
+| `Ctrl+Shift+G` | Jump to Definition (Code Intelligence) |
+| `Ctrl+Shift+R` | Find All References (Code Intelligence) |
 | `Enter` | Open file (in File Explorer) |
 
 #### Run
@@ -272,6 +283,16 @@ ollama pull llama3
 2. **Search Symbols**: Type in the search box to filter classes/functions
 3. **Jump to Definition**: Click any symbol to jump to its location in the code
 4. **Auto-Update**: Outline automatically updates when switching files or groups
+
+### Code Intelligence
+
+1. **Index**: Activate your projects, then open the "🧠 Code Intel" tab (*Index* sub-tab). The first run indexes active projects in the background; use *Index Active Projects* or *Clear & Rebuild Index* to refresh by hand
+2. **Jump to Definition**: Put the cursor on (or select) a name and press `Ctrl+Shift+G`. On an `import` line it prefers the module you are importing from
+3. **Find References**: Press `Ctrl+Shift+R`. The *Refs* tab lists every whole-word match grouped by file; untick *Include comments & strings* to cut noise, and click a row to jump to it
+4. **Search Symbols**: Press `Ctrl+T` and type part of a class, function or method name
+5. **Browse a File**: The *Symbols* tab shows the current file's classes and methods; click one to jump
+
+> References are matched by name, not by scope, so two unrelated methods with the same name will both be listed. See the roadmap for scope-aware references.
 
 ### Project Workflow
 
@@ -319,6 +340,7 @@ The IDE stores configuration in your workspace directory:
 - **Find & Replace**: Regex-capable search with scoring algorithm
 - **Session Manager**: Persistent state across restarts
 - **Tab Order Manager**: Intelligent tab switching based on recent usage
+- **Code Intelligence Plugin**: Symbol database (name/file/qualified-name indexes with a JSON cache), AST-based Python indexer, ranked definition lookup, whole-word reference tracker and the sidebar panels (`ide/plugins/Codeintelligence/`)
 
 ### Supported Languages (Outline)
 
@@ -348,6 +370,7 @@ Features below are grouped by their current status.
 - [x] **Session Persistence** — restore open tabs and preserve workspace state between sessions.
 - [x] **Quick Open** — fuzzy file search with `Ctrl+P`, plus recent-file navigation.
 - [x] **Code Outline** — navigate classes, functions, methods, and other supported symbols across multiple languages.
+- [x] **Code Intelligence** — project-wide symbol index, jump to definition, quick symbol search, and find all references in a right-sidebar panel.
 - [x] **Search and Replace** — regex support, matching options, and navigation through results.
 - [x] **Editor Productivity** — line numbers, comment/uncomment, duplicate line or selection, indentation, and multiple cursors.
 - [x] **Ollama Integration** — local AI assistance, configurable models, and code-aware prompts.
@@ -368,12 +391,33 @@ Features below are grouped by their current status.
 ### Planned — Development Workflow
 
 - [ ] Git integration with change indicators, diffs, staging, and commit workflows.
-- [ ] Project-wide symbol search and reference navigation.
 - [ ] Integrated debugging and breakpoint support.
-- [ ] Advanced refactoring tools, including rename symbol and safe code transformations.
+- [ ] Advanced refactoring tools, including rename symbol and safe code transformations (see *Planned — Code Intelligence*).
 - [ ] Configurable themes and editor appearance.
 - [ ] Unified diagnostics panel for errors, warnings, and task output.
 - [ ] Project tasks for running tests, linters, formatters, and build commands.
+
+### Planned — Code Intelligence
+
+Code Intelligence currently matches symbols by name. The items below build on that foundation, roughly in priority order.
+
+**Quick wins**
+
+- [ ] Back/forward navigation history (`Alt+Left` / `Alt+Right`) so you can return after jumping to a definition.
+- [ ] Follow-cursor outline — highlight the class or function under the cursor in the Symbols tab and show reference counts beside each symbol.
+- [ ] Typed filters in Quick Symbol Search (for example `c:` for classes, `f:` for functions) and a "symbols in this file" mode.
+
+**Medium effort**
+
+- [ ] Scope-aware Python references using the AST, separating `self.save` from `other.save` and removing comment/string guesswork.
+- [ ] Class hierarchy view showing subclasses and ancestors from the indexed base classes.
+- [ ] Incremental re-indexing using file modification times, to pick up changes made outside the IDE.
+- [ ] Run Find All References on a background thread (or keep an identifier index) so very large workspaces stay responsive.
+
+**Builds on scope-aware references**
+
+- [ ] Rename symbol with a preview of every change before it is applied.
+- [ ] Unused-symbol finder listing functions and classes with no references.
 
 ### Planned — AI-Assisted Development
 
