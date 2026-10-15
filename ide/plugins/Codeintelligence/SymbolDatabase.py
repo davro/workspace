@@ -5,6 +5,7 @@ SymbolDatabase - Storage and indexing for symbols
 """
 
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -134,7 +135,26 @@ class SymbolDatabase:
         Returns:
             List of SymbolInfo objects in that file
         """
-        return self.symbols_by_file.get(file_path, [])
+        symbols = self.symbols_by_file.get(file_path)
+        if symbols is not None:
+            return symbols
+        # Tolerate path-format differences (editor vs indexer): ./a/../b, slashes
+        wanted = os.path.normpath(str(file_path))
+        for key, value in list(self.symbols_by_file.items()):
+            if os.path.normpath(key) == wanted:
+                return value
+        return []
+
+    def has_file(self, file_path: str) -> bool:
+        """True if the file has been indexed (even if it has no symbols)"""
+        return bool(self.get_file_symbols(file_path))
+
+    def prune_missing_files(self) -> int:
+        """Drop cached symbols for files that no longer exist. Returns count removed."""
+        missing = [f for f in list(self.symbols_by_file.keys()) if not os.path.exists(f)]
+        for f in missing:
+            self.remove_file(f)
+        return len(missing)
     
     def fuzzy_search(self, pattern: str, limit: int = 50) -> List[SymbolInfo]:
         """
@@ -207,13 +227,24 @@ class SymbolDatabase:
         Returns:
             Dictionary with statistics
         """
-        all_symbols = self._all_symbols()
+        total = classes = functions = methods = 0
+        with self._lock:
+            for symbols in self.symbols_by_name.values():
+                for s in symbols:
+                    total += 1
+                    if s.type == 'class':
+                        classes += 1
+                    elif s.type == 'function':
+                        functions += 1
+                    elif s.type == 'method':
+                        methods += 1
+            files = len(self.symbols_by_file)
         return {
-            'total_symbols': len(all_symbols),
-            'files_indexed': len(self.symbols_by_file),
-            'classes': sum(1 for s in all_symbols if s.type == 'class'),
-            'functions': sum(1 for s in all_symbols if s.type == 'function'),
-            'methods': sum(1 for s in all_symbols if s.type == 'method'),
+            'total_symbols': total,
+            'files_indexed': files,
+            'classes': classes,
+            'functions': functions,
+            'methods': methods,
         }
     
     def clear(self):

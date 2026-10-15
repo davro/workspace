@@ -162,7 +162,6 @@ class Workspace(QMainWindow, SettingsProvider):
         # Linux   : ~/.config/workspace-ide/
         # macOS   : ~/Library/Application Support/workspace-ide/
         # Windows : %APPDATA%\workspace-ide\
-
         self.app_config_dir = AppDirs.base()
         self.config_file    = self.app_config_dir / "config.json"
         self.session_file   = self.app_config_dir / "session.json"

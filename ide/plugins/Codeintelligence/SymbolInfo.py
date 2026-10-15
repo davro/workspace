@@ -1,4 +1,4 @@
-# ide/plugins/Codeintelligene/SymbolInfo.py
+# ide/plugins/Codeintelligence/SymbolInfo.py
 
 """
 SymbolInfo - Complete information about a code symbol
@@ -118,11 +118,14 @@ class SymbolInfo:
 class Reference:
     """Represents a reference to a symbol"""
     
-    def __init__(self, file_path: str, line: int, column: int, context: str):
+    # kind: 'definition' | 'reference' | 'comment' | 'string'
+    def __init__(self, file_path: str, line: int, column: int, context: str,
+                 kind: str = 'reference'):
         self.file_path = file_path
         self.line = line
         self.column = column
         self.context = context  # Line of code containing reference
+        self.kind = kind
     
     def __repr__(self):
         return f"<Reference {Path(self.file_path).name}:{self.line}:{self.column}>"
@@ -133,7 +136,8 @@ class Reference:
             'file_path': self.file_path,
             'line': self.line,
             'column': self.column,
-            'context': self.context
+            'context': self.context,
+            'kind': self.kind
         }
     
     @classmethod
@@ -143,5 +147,6 @@ class Reference:
             file_path=data['file_path'],
             line=data['line'],
             column=data['column'],
-            context=data['context']
+            context=data['context'],
+            kind=data.get('kind', 'reference')
         )
