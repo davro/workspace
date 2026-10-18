@@ -4,6 +4,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QTextBrowser,

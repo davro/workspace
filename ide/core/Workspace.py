@@ -22,6 +22,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QFileSystemModel, QShortcut, QKeySequence, QTextCursor
 from PyQt6.QtCore import Qt, QTimer
 
+# import sys, traceback
+# sys.excepthook = lambda t, v, tb: traceback.print_exception(t, v, tb)
+
 # Import IDE Core classes
 from ide import VERSION
 from ide.core.Plugin import PluginManager
@@ -194,7 +197,6 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Create Plugin Manager (manages plugin files on disk)
         self.plugin_manager = PluginManager(self.workspace_plugin_path, self.plugin_api)
-        self.plugin_manager.scan_plugins()
 
         # Initialize split manager
         self.split_manager = SplitEditorManager(self)
@@ -222,6 +224,9 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Expose status_message for compatibility
         self.status_message = self.statusbar_manager.status_message
+
+        # Scan plugins
+        self.plugin_manager.scan_plugins()
 
         # Setup menus
         self._create_menus()
@@ -258,11 +263,11 @@ class Workspace(QMainWindow, SettingsProvider):
 
         # Track if session needs saving (optimization)
         self.session_dirty = False
-        
+
         # Save explorer expansion/collapse changes with the session.
         self.tree.expanded.connect(self.mark_session_dirty)
         self.tree.collapsed.connect(self.mark_session_dirty)
-        
+
         # Apply initial settings
         self.apply_settings()
 
@@ -394,7 +399,7 @@ class Workspace(QMainWindow, SettingsProvider):
         """Create left sidebar with file explorer and projects"""
         self.left_tabs = QTabWidget()
         self.left_tabs.setMaximumWidth(450)
-      
+
         # File Explorer
         explorer_widget = QWidget()
         explorer_layout = QVBoxLayout(explorer_widget)
@@ -424,16 +429,21 @@ class Workspace(QMainWindow, SettingsProvider):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_explorer_context_menu)
 
+        # F2 = rename selected item (only when the explorer has focus)
+        self.rename_shortcut = QShortcut(QKeySequence("F2"), self.tree)
+        self.rename_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        self.rename_shortcut.activated.connect(self.rename_selected_in_explorer)
+
         explorer_layout.addWidget(self.tree)
 
         # Keep your existing Files tab creation:
         self.left_tabs.addTab(explorer_widget, "📁 Files")
-        
+
         # Keep your existing ProjectsPanel setup:
         self.projects_panel = ProjectsPanel(self.workspace_path, self)
         self.projects_panel.projects_changed.connect(self.update_tree_highlighting)
         self.left_tabs.addTab(self.projects_panel, "📦 Projects")
-        
+
         # self.project_tasks_panel = ProjectTasksPanel(self.workspace_path, self)
         self.project_tasks_panel = ProjectTasksPanel(
             self.workspace_path,
@@ -634,9 +644,9 @@ class Workspace(QMainWindow, SettingsProvider):
         view_menu = self.menuBar().findChildren(QMenu)[2]  # Adjust index
         view_menu.addSeparator()
         self.menu_manager._add_action(
-            view_menu, 
-            "Reveal in Explorer", 
-            "Ctrl+Shift+E", 
+            view_menu,
+            "Reveal in Explorer",
+            "Ctrl+Shift+E",
             self.reveal_in_explorer
         )
 
@@ -750,7 +760,6 @@ class Workspace(QMainWindow, SettingsProvider):
     def show_explorer_context_menu(self, position):
         """Show context menu for file explorer"""
 
-
         index = self.tree.indexAt(position)
         menu = QMenu()
 
@@ -834,6 +843,14 @@ class Workspace(QMainWindow, SettingsProvider):
                         file_path,
                         self.settings_manager.settings
                     )
+
+    def rename_selected_in_explorer(self):
+        """Rename the currently selected item in the file explorer (F2)"""
+        index = self.tree.currentIndex()
+        if not index.isValid():
+            return
+        path = Path(self.file_model.filePath(index))
+        self.file_manager.rename_item(path, self.tab_manager)
 
     # =====================================================================
     # Tab Context Menu
@@ -1339,12 +1356,6 @@ class Workspace(QMainWindow, SettingsProvider):
         dialog = DocumentDialog(readme_path, self)
         dialog.exec()
 
-    def show_changelog(self):
-        """Show changelog"""
-        path = self.workspace_path / "CHANGELOG.md"
-        dialog = DocumentDialog(path, self)
-        dialog.exec()
-
     def show_about(self):
         """Show about dialog"""
         QMessageBox.about(
@@ -1684,21 +1695,21 @@ class Workspace(QMainWindow, SettingsProvider):
         """
         # Get the current editor
         current_editor = self.get_current_editor()
-    
+
         if not isinstance(current_editor, CodeEditor):
             self.show_status_message("No file open", 2000)
             return
-    
+
         if not getattr(current_editor, 'file_path', None):
             self.show_status_message(
                 "Current editor has no file path", 2000
             )
             return
-    
+
         # Normalize both paths before checking workspace membership.
         file_path = Path(current_editor.file_path).resolve()
         workspace_root = Path(self.workspace_path).resolve()
-    
+
         try:
             file_path.relative_to(workspace_root)
         except ValueError:
@@ -1706,42 +1717,42 @@ class Workspace(QMainWindow, SettingsProvider):
                 "File is outside workspace", 2000
             )
             return
-    
+
         # Look up the file using its normalized absolute path.
         index = self.file_model.index(str(file_path))
-    
+
         if not index.isValid():
             self.show_status_message(
                 "Could not find file in explorer", 2000
             )
             return
-    
+
         # Make sure the explorer is visible.
         explorer_widget = self.main_splitter.widget(0)
-    
+
         if not explorer_widget.isVisible():
             explorer_widget.setVisible(True)
-    
+
         # Switch to the Files tab.
         left_tabs = explorer_widget.findChild(QTabWidget)
-    
+
         if left_tabs:
             left_tabs.setCurrentIndex(0)
-    
+
         # Expand all parent directories, from the file upwards.
         parent_index = index.parent()
-    
+
         while parent_index.isValid():
             self.tree.expand(parent_index)
             parent_index = parent_index.parent()
-    
+
         # Select and scroll to the file.
         self.tree.setCurrentIndex(index)
         self.tree.scrollTo(
             index,
             QTreeView.ScrollHint.PositionAtCenter
         )
-    
+
         self.show_status_message(
             f"Revealed: {file_path.name}", 2000
         )

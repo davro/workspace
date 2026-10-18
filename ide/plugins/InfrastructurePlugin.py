@@ -50,7 +50,7 @@ class InfrastructurePlugin:
     PLUGIN_NAME = "Infrastructure"
     PLUGIN_VERSION = "0.1.0"
     PLUGIN_DESCRIPTION = "Disposable local Kubernetes (k3d) clusters and Terraform workflows"
-    PLUGIN_RUN_ON_STARTUP = True
+    PLUGIN_RUN_ON_STARTUP = False
     PLUGIN_HAS_UI = True
     PLUGIN_ICON = "\u2638"  # ☸
 

@@ -271,9 +271,8 @@ class MenuManager:
 
         self._add_action(menu, "About Workspace IDE", None, self.parent.show_about)
         self._add_action(menu, "Documentation", "F1", self.parent.show_documentation)
-        self._add_action(menu, "Changelog", "F2", self.parent.show_changelog)
         menu.addSeparator()
-        self._add_action(menu, "Keyboard Shortcuts", "Ctrl+K Ctrl+S", self.parent.show_keyboard_shortcuts)
+        self._add_action(menu, "Keyboard Shortcuts", "Ctrl+K, Ctrl+S", self.parent.show_keyboard_shortcuts)
 
         return menu
 

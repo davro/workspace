@@ -240,7 +240,7 @@ class CronManagerPlugin:
     PLUGIN_NAME = "Cron Manager"
     PLUGIN_VERSION = "1.0.0"
     PLUGIN_DESCRIPTION = "Manage cron tasks and monitor data directory"
-    PLUGIN_RUN_ON_STARTUP = True
+    PLUGIN_RUN_ON_STARTUP = False
     PLUGIN_HAS_UI = True
     PLUGIN_ICON = "⏰"
     
