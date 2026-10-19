@@ -12,6 +12,7 @@ Connects the IDE to MCP (Model Context Protocol) servers:
 Requires:  pip install mcp
 """
 
+import sys
 import json
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 
 from McpPlugin.McpClientManager import McpClientManager, McpError
+# from McpPlugin.skills import SkillRegistry
+from McpPlugin.skills import SkillRegistry, default_skill_roots, ensure_skills_server
 
 STATUS_STYLE = {
     "connected":    ("●", "#98C379"),
@@ -70,6 +73,22 @@ class McpPlugin:
         config_path = Path(config_dir) / "servers.json"
 
         self.manager = McpClientManager(config_path)
+
+
+        # skill_roots = [Path(config_dir) / "skills",                       # user-level
+                       # Path(self.api.get_workspace_path()) / "skills"]    # project-level (wins)
+        # self.api.skills = SkillRegistry(skill_roots)
+        # self._ensure_skills_server(skill_roots)
+        
+        skill_roots = default_skill_roots(workspace=self.api.get_workspace_path(), config_dir=config_dir)
+        self.api.skills = SkillRegistry(skill_roots)
+        try:
+            ensure_skills_server(self.manager, skill_roots)    # before manager.reload()
+        except Exception as e:
+            print(f"[{self.PLUGIN_NAME}] Could not register skills server: {e}")
+
+
+
         self.manager.start()
         self.api.mcp = self.manager        # other plugins look this up lazily
 
@@ -93,6 +112,17 @@ class McpPlugin:
         self.initialized = True
         print(f"[{self.PLUGIN_NAME}] Initialized (config: {config_path})")
 
+    # def _ensure_skills_server(self, roots):
+        # """Register the skills server in servers.json once; edit the file to change it."""
+        # try:
+            # if "skills" in self.manager.load_config():
+                # return
+            # server = Path(__file__).resolve().parent / "McpPlugin" / "skills_server.py"
+            # args = [str(server)] + [a for r in roots for a in ("--root", str(r))]
+            # self.manager.add_server_to_config("skills", {"command": sys.executable, "args": args})
+        # except Exception as e:
+            # print(f"[{self.PLUGIN_NAME}] Could not register skills server: {e}")
+
     def get_widget(self, parent=None):
         return McpPanel(self, parent)
 
@@ -110,6 +140,7 @@ class McpPlugin:
             self.api.unregister_all_plugin_hooks('mcp_plugin')
             if getattr(self.api, "mcp", None) is self.manager:
                 self.api.mcp = None
+                self.api.skills = None
         self.initialized = False
 
 

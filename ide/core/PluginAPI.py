@@ -10,7 +10,6 @@ Allows plugins to hook into IDE functionality and extend behavior
 from typing import Callable, List, Any, Optional, Dict
 from pathlib import Path
 
-
 class PluginAPI:
     """
     API exposed to plugins for IDE integration
@@ -79,7 +78,6 @@ class PluginAPI:
     # =========================================================================
     # Hook Registration
     # =========================================================================
-
     def register_hook(self, hook_name: str, callback: Callable, plugin_id: Optional[str] = None) -> bool:
         """
         Register a callback for a hook
@@ -195,11 +193,9 @@ class PluginAPI:
         """
         return {name: len(callbacks) for name, callbacks in self.hooks.items()}
 
-
     # ========================================================================
     # Settings Support
     # ========================================================================
-    
     def register_settings_provider(self, provider_class):
         """
         Register a settings provider (plugin class with SETTINGS_DESCRIPTORS)
@@ -225,17 +221,6 @@ class PluginAPI:
             return self.ide.settings_manager.settings
         return {}
 
-    # def get_settings(self) -> Dict[str, Any]:
-        # """
-        # Get IDE settings
-
-        # Returns:
-            # Dictionary of settings
-        # """
-        # if hasattr(self.ide, 'settings_manager'):
-            # return self.ide.settings_manager.settings
-        # return {}
-
     def get_setting(self, key, default=None):
         """Get a specific setting value"""
         if hasattr(self.ide, 'settings_manager'):
@@ -252,7 +237,6 @@ class PluginAPI:
     # =========================================================================
     # IDE Access Methods
     # =========================================================================
-
     def get_current_editor(self):
         """
         Get currently active editor
@@ -315,7 +299,6 @@ class PluginAPI:
     # =========================================================================
     # UI Manipulation Methods
     # =========================================================================
-
     def show_status_message(self, message: str, timeout: int = 3000):
         """
         Show message in status bar
@@ -374,7 +357,6 @@ class PluginAPI:
     # =========================================================================
     # File Operations
     # =========================================================================
-
     def open_file(self, file_path: str):
         """
         Open a file in the editor
@@ -444,7 +426,6 @@ class PluginAPI:
     # =========================================================================
     # Context Menu Extensions
     # =========================================================================
-
     def add_file_context_menu_action(self, text: str, callback: Callable):
         """
         Add action to file tree context menu
@@ -480,7 +461,6 @@ class PluginAPI:
     # =========================================================================
     # Cache Management
     # =========================================================================
-
     def set_cache(self, key: str, value: Any):
         """
         Store value in plugin cache
@@ -531,7 +511,6 @@ class PluginAPI:
     # =========================================================================
     # Utility Methods
     # =========================================================================
-
     def log(self, message: str, level: str = "INFO"):
         """
         Log a message
@@ -551,11 +530,9 @@ class PluginAPI:
         """
         return "2.0.0"
 
-
     # ============================================================================
     # BONUS: Useful helper methods for plugins
     # ============================================================================
-    
     def get_main_window(self):
         """
         Get reference to main IDE window
@@ -564,7 +541,6 @@ class PluginAPI:
             Workspace: Main IDE window instance
         """
         return self.ide
-    
     
     def get_current_editor(self):
         """
@@ -587,8 +563,7 @@ class PluginAPI:
         if hasattr(self.ide, 'workspace_path'):
             return self.ide.workspace_path
         return None
-    
-    
+
     def show_status_message(self, message: str, timeout: int = 2000):
         """
         Show message in status bar
@@ -603,8 +578,6 @@ class PluginAPI:
             if timeout > 0:
                 from PyQt6.QtCore import QTimer
                 QTimer.singleShot(timeout, lambda: self.ide.status_message.setText(""))
-    
-
 
     def register_keyboard_shortcut(
         self,
@@ -657,38 +630,6 @@ class PluginAPI:
             traceback.print_exc()
             return None
 
-
-
-
-    # ============================================================================
-    # ADD THESE METHODS TO PluginAPI CLASS
-    # ============================================================================
-
-    
-    # def add_to_right_sidebar(self, widget, title: str, icon: str = "") -> bool:
-        # """
-        # Add a plugin widget to the right sidebar
-        
-        # Args:
-            # widget: QWidget to add as a tab
-            # title: Tab title
-            # icon: Optional emoji/icon prefix
-        
-        # Returns:
-            # bool: True if added successfully
-        
-        # Example:
-            # >>> widget = MyPluginWidget()
-            # >>> api.add_to_right_sidebar(widget, "My Tool", "🔧")
-        # """
-        # if hasattr(self.ide, 'right_sidebar'):
-            # tab_title = f"{icon} {title}" if icon else title
-            # index = self.ide.right_sidebar.addTab(widget, tab_title)
-            # return True
-        
-        # print(f"[PluginAPI] Warning: right_sidebar not found in IDE")
-        # return False
-
     def add_to_right_sidebar(self, widget, title: str, icon: str = "") -> bool:
         """
         Add a plugin widget to the right sidebar
@@ -728,9 +669,8 @@ class PluginAPI:
         # Add the new tab
         index = sidebar.addTab(widget, tab_title)
         print(f"[PluginAPI] Added tab to right sidebar: {tab_title} (index {index})")
-        return True    
+        return True
 
-    
     def remove_from_right_sidebar(self, widget) -> bool:
         """
         Remove a plugin widget from the right sidebar
@@ -751,8 +691,7 @@ class PluginAPI:
                     return True
         
         return False
-    
-    
+
     def get_right_sidebar_visible(self) -> bool:
         """
         Check if right sidebar is visible
@@ -764,8 +703,7 @@ class PluginAPI:
             right_sidebar = self.ide.main_splitter.widget(2)
             return right_sidebar.isVisible() if right_sidebar else False
         return False
-    
-    
+
     def set_right_sidebar_visible(self, visible: bool):
         """
         Show or hide the right sidebar
@@ -790,8 +728,7 @@ class PluginAPI:
                     ])
                 else:
                     right_sidebar.hide()
-    
-    
+
     def focus_right_sidebar_tab(self, title: str) -> bool:
         """
         Switch to a specific tab in right sidebar by title
@@ -817,11 +754,9 @@ class PluginAPI:
         
         return False
 
-    
     # ============================================================================
     # OPTIONAL: Add Menu Item Support
     # ============================================================================
-    
     def add_menu_action(self, menu_path: str, action_name: str, callback, 
                        shortcut: str = None) -> bool:
         """
@@ -884,12 +819,7 @@ class PluginAPI:
         current_menu.addAction(action)
         
         return True
-    
-    
-    # ============================================================================
-    # EXAMPLE: Context Menu Support (Advanced)
-    # ============================================================================
-    
+
     def add_editor_context_menu_item(self, label: str, callback, condition=None):
         """
         Add item to editor context menu
@@ -919,12 +849,6 @@ class PluginAPI:
             'condition': condition
         })
 
-
-
-# ============================================================================
-# FileTreeDecoration - Result object for file tree decorators
-# ============================================================================
-
 class FileTreeDecoration:
     """
     Decoration information for file tree items
@@ -952,11 +876,6 @@ class FileTreeDecoration:
     def __repr__(self):
         return f"FileTreeDecoration({self.file_path})"
 
-
-# ============================================================================
-# GutterMarker - Result object for gutter decorators
-# ============================================================================
-
 class GutterMarker:
     """
     Marker information for editor gutter
@@ -981,11 +900,6 @@ class GutterMarker:
     def __repr__(self):
         return f"GutterMarker(line={self.line}, icon={self.icon})"
 
-
-# ============================================================================
-# StatusBarWidget - Result object for status bar widgets
-# ============================================================================
-
 class StatusBarWidget:
     """
     Widget information for status bar
@@ -1006,4 +920,3 @@ class StatusBarWidget:
 
     def __repr__(self):
         return f"StatusBarWidget(permanent={self.permanent})"
-

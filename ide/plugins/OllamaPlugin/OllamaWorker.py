@@ -56,12 +56,13 @@ class OllamaChatWorker(QThread):
     tool_result = pyqtSignal(str, str, bool)   # tool name, preview, is_error
     approval_needed = pyqtSignal(str, str, object)   # name, args JSON, holder dict
     notice = pyqtSignal(str)              # informational line for the chat
+    stats = pyqtSignal(dict)              # Ollama's timing/token counts for one model call
     discard_reply = pyqtSignal()          # the text just streamed was really a tool call; drop it
     done = pyqtSignal(list)               # new messages to append to history
     failed = pyqtSignal(str)
 
     def __init__(self, model, messages, tools=None, mcp=None,
-                 timeout=240, tool_timeout=120, options=None, parent=None):
+                 timeout=240, tool_timeout=120, options=None, parent=None, think=None):
         super().__init__(parent)
         self.model = model
         self.messages = list(messages)
@@ -70,6 +71,7 @@ class OllamaChatWorker(QThread):
         self.timeout = timeout
         self.tool_timeout = tool_timeout
         self.options = options or None      # e.g. {"temperature": 0.2}
+        self.think = think                  # None = model default, False/True, or "low"/"medium"/"high" (gpt-oss)
         self.base_url = ollama_base_url()
         self._cancel = threading.Event()
 
@@ -127,6 +129,8 @@ class OllamaChatWorker(QThread):
             payload["tools"] = self.tools
         if self.options:
             payload["options"] = self.options
+        if self.think is not None:
+            payload["think"] = self.think
 
         request = urllib.request.Request(
             self.base_url + "/api/chat",
@@ -137,6 +141,10 @@ class OllamaChatWorker(QThread):
             response = urllib.request.urlopen(request, timeout=self.timeout)
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
+            if self.think is not None and e.code == 400 and "think" in body.lower():
+                self.notice.emit("This model does not support the think option - continuing without it.")
+                self.think = None
+                return self._chat_once(convo)
             if self.tools and e.code == 400 and "tool" in body.lower():
                 self.notice.emit("This model does not support tools - continuing without MCP tools.")
                 self.tools = None
@@ -176,6 +184,9 @@ class OllamaChatWorker(QThread):
                 if message.get("tool_calls"):
                     tool_calls.extend(message["tool_calls"])
                 if chunk.get("done"):
+                    self.stats.emit({k: chunk[k] for k in ("total_duration", "load_duration", "prompt_eval_count",
+                                                           "prompt_eval_duration", "eval_count", "eval_duration")
+                                     if k in chunk})
                     break
 
         text = "".join(content)
